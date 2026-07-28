@@ -1,0 +1,7 @@
+{
+  "status_code": 200,
+  "request_id": "request-id-test-example",
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJtMm0tY2xpZW50LXRlc3QifQ.sig",
+  "token_type": "bearer",
+  "expires_in": 3600
+}

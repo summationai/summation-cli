@@ -1,0 +1,10 @@
+# Build artifacts — rebuild with `uv build` immediately before publishing.
+dist/
+
+# Local tooling
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+.DS_Store
