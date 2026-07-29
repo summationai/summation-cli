@@ -9,6 +9,7 @@
     code { background: #f4f4f5; padding: 0.1em 0.35em; border-radius: 4px; }
     pre { background: #f4f4f5; padding: 1rem; overflow-x: auto; border-radius: 6px; }
     a { color: #0f172a; }
+    .tip { margin-top: 0.75rem; color: #475569; font-size: 0.95rem; }
   </style>
 </head>
 <body>
@@ -16,8 +17,18 @@
   <p>Install the Summation CLI (<code>summation-cli</code> on PyPI).</p>
   <h2>macOS / Linux</h2>
   <pre><code>curl -fsSL https://install.summation.com/sumcli | sh</code></pre>
+  <p class="tip">
+    Inspect first:
+    <code>curl -fsSL https://install.summation.com/sumcli | less</code>
+    · <a href="/sumcli">view script</a>
+  </p>
   <h2>Windows (PowerShell)</h2>
   <pre><code>irm https://install.summation.com/sumcli.ps1 | iex</code></pre>
+  <p class="tip">
+    Inspect first:
+    <code>irm https://install.summation.com/sumcli.ps1 | more</code>
+    · <a href="/sumcli.ps1">view script</a>
+  </p>
   <h2>Already have uv?</h2>
   <pre><code>uv tool install summation-cli</code></pre>
   <p>
