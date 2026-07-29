@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 
@@ -15,6 +15,7 @@ app = typer.Typer(no_args_is_help=True)
 # sum-api QueryExecutionRequest.limit: default 100, maximum 10000.
 _API_DEFAULT_LIMIT = 100
 _API_MAX_PAGE = 10000
+_QUERY_FAILED_STATES = frozenset({"FAILED", "ERROR"})
 
 
 def _strip_sql(sql: str) -> str:
@@ -24,15 +25,18 @@ def _strip_sql(sql: str) -> str:
     return s
 
 
-def _page_sql(sql: str, offset: int) -> str:
-    """Wrap user SQL so a subsequent page can apply OFFSET under the API row cap."""
+def _page_sql(sql: str, offset: int, page_limit: int) -> str:
+    """Wrap user SQL so a subsequent page can apply LIMIT/OFFSET under the API row cap."""
     stripped = _strip_sql(sql)
     if offset <= 0:
         return stripped
-    return f"SELECT * FROM (\n{stripped}\n) AS _sumcli_page\nOFFSET {int(offset)}"
+    return (
+        f"SELECT * FROM (\n{stripped}\n) AS _sumcli_page\n"
+        f"LIMIT {int(page_limit)} OFFSET {int(offset)}"
+    )
 
 
-def extract_query_rows(data: object) -> list[Any]:
+def _extract_query_rows(data: object) -> list[Any]:
     """Pull row list from query-execution payloads (nested or flat)."""
     if isinstance(data, list):
         return data
@@ -48,6 +52,43 @@ def extract_query_rows(data: object) -> list[Any]:
         if isinstance(rows, list):
             return rows
     return []
+
+
+def _page_failed(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    status = str(data.get("status", "")).upper()
+    return status in _QUERY_FAILED_STATES
+
+
+def _emit_query_failed(
+    data: dict[str, Any],
+    *,
+    page: int,
+    offset: int,
+    rows_so_far: int,
+) -> NoReturn:
+    detail = data.get("error")
+    status = data.get("status")
+    if detail:
+        message = f"Query execution failed on page {page} ({detail})."
+    else:
+        message = f"Query execution failed on page {page} with status {status!r}."
+    message += f" Retrieved {rows_so_far} row(s) before the failure."
+    emit_error(
+        err(
+            "QUERY_FAILED",
+            message,
+            "Fix the query and retry. When using --limit above 10000, include "
+            "ORDER BY so OFFSET pages are stable.",
+            data={
+                "page": page,
+                "offset": offset,
+                "rows_so_far": rows_so_far,
+                "query": data,
+            },
+        )
+    )
 
 
 def _execute_query(client: Any, sql: str, page_limit: int) -> dict[str, Any]:
@@ -69,10 +110,19 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
 
     while len(rows) < desired:
         page_limit = min(_API_MAX_PAGE, desired - len(rows))
-        page_sql = _page_sql(query_sql, offset) if offset > 0 else _strip_sql(query_sql)
+        page_sql = (
+            _page_sql(query_sql, offset, page_limit) if offset > 0 else _strip_sql(query_sql)
+        )
         data = _execute_query(client, page_sql, page_limit)
+        if _page_failed(data):
+            _emit_query_failed(
+                data,
+                page=len(pages) + 1,
+                offset=offset,
+                rows_so_far=len(rows),
+            )
         pages.append(data)
-        page_rows = extract_query_rows(data)
+        page_rows = _extract_query_rows(data)
         rows.extend(page_rows)
         if len(page_rows) < page_limit:
             exhausted = True
@@ -82,19 +132,17 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
             break  # single request satisfied the ask
 
     clipped = rows[:desired]
-    # Truncated when we hit --limit on a full final page (more rows may exist).
+    # truncated=true means we hit --limit on a full final page (more rows may exist).
     truncated = len(clipped) >= desired and not exhausted
 
-    result: dict[str, Any] = {
-        "query": pages[-1] if len(pages) == 1 else {"status": "succeeded", "pages": len(pages)},
+    return {
+        "query": pages[-1],
         "rows": clipped,
         "showing": len(clipped),
         "limit": desired,
         "truncated": truncated,
+        "pages": len(pages),
     }
-    if len(pages) > 1:
-        result["pages"] = len(pages)
-    return result
 
 
 @app.command("run")
@@ -108,7 +156,8 @@ def run_query(
             "--limit",
             help=(
                 "Max rows to return (API default 100, max 10000 per request). "
-                "Values above 10000 auto-paginate with OFFSET."
+                "Values above 10000 auto-paginate with LIMIT/OFFSET — include ORDER BY "
+                "for stable pages. truncated=true means the cap was hit and more may exist."
             ),
             min=1,
         ),

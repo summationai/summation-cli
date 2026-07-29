@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from sum_cli.cli.main import app
 from sum_cli.resources.queries import (
     _API_MAX_PAGE,
+    _extract_query_rows,
     _page_sql,
     _run_paginated,
-    extract_query_rows,
 )
 
 runner = CliRunner()
@@ -27,24 +28,25 @@ def _row(n: int) -> dict:
     return {"columns": {"n": str(n)}}
 
 
-def _page_body(rows: list[dict]) -> dict:
-    return {"status": "succeeded", "result": {"rows": rows, "rowsWithColumnOrder": []}}
+def _page_body(rows: list[dict], *, status: str = "succeeded") -> dict:
+    return {"status": status, "result": {"rows": rows, "rowsWithColumnOrder": []}}
 
 
 def test_extract_query_rows_nested() -> None:
     data = _page_body([_row(1), _row(2)])
-    assert len(extract_query_rows(data)) == 2
+    assert len(_extract_query_rows(data)) == 2
 
 
 def test_extract_query_rows_flat_fallback() -> None:
-    assert extract_query_rows({"rows": [_row(1)]}) == [_row(1)]
-    assert extract_query_rows({"results": [_row(1)]}) == [_row(1)]
+    assert _extract_query_rows({"rows": [_row(1)]}) == [_row(1)]
+    assert _extract_query_rows({"results": [_row(1)]}) == [_row(1)]
 
 
 def test_page_sql_offset() -> None:
-    assert _page_sql("select 1;", 0) == "select 1"
-    assert "OFFSET 10000" in _page_sql("select * from t", 10000)
-    assert "_sumcli_page" in _page_sql("select * from t", 10000)
+    assert _page_sql("select 1;", 0, 50) == "select 1"
+    wrapped = _page_sql("select * from t", 10000, 50)
+    assert "LIMIT 50 OFFSET 10000" in wrapped
+    assert "_sumcli_page" in wrapped
 
 
 def test_single_page_under_cap() -> None:
@@ -54,9 +56,9 @@ def test_single_page_under_cap() -> None:
     result = _run_paginated(client, "select 1", desired=5)
 
     assert result["showing"] == 5
-    assert result["truncated"] is True  # full page at limit
+    assert result["truncated"] is True  # full page at limit → more may exist
     assert result["limit"] == 5
-    assert "pages" not in result
+    assert result["pages"] == 1
     client.request.assert_called_once()
     payload = client.request.call_args.kwargs["json"]
     assert payload["limit"] == 5
@@ -71,6 +73,7 @@ def test_exhausted_not_truncated() -> None:
 
     assert result["showing"] == 2
     assert result["truncated"] is False
+    assert result["pages"] == 1
 
 
 def test_auto_paginate_above_api_max() -> None:
@@ -94,7 +97,7 @@ def test_auto_paginate_above_api_max() -> None:
     assert result["pages"] == 2
     assert result["truncated"] is True
     second_sql = client.request.call_args_list[1].kwargs["json"]["sql"]
-    assert "OFFSET 10000" in second_sql
+    assert "LIMIT 50 OFFSET 10000" in second_sql
 
 
 def test_auto_paginate_stops_when_source_exhausted() -> None:
@@ -113,6 +116,27 @@ def test_auto_paginate_stops_when_source_exhausted() -> None:
     assert result["showing"] == _API_MAX_PAGE + 10
     assert result["pages"] == 2
     assert result["truncated"] is False
+
+
+def test_mid_pagination_failure_emits_error() -> None:
+    client = MagicMock()
+
+    def _respond(_method, _path, json=None):
+        sql = json["sql"]
+        if "OFFSET" not in sql:
+            return _page_body([_row(i) for i in range(_API_MAX_PAGE)])
+        return {
+            "status": "failed",
+            "error": "timeout",
+            "result": {"rows": []},
+        }
+
+    client.request.side_effect = _respond
+
+    with pytest.raises(SystemExit) as exc:
+        _run_paginated(client, "select * from t", desired=_API_MAX_PAGE + 50)
+
+    assert exc.value.code == 1
 
 
 def test_cli_queries_run_extracts_nested_rows(monkeypatch) -> None:
@@ -135,3 +159,40 @@ def test_cli_queries_run_extracts_nested_rows(monkeypatch) -> None:
     assert body["result"]["showing"] == 3
     assert len(body["result"]["rows"]) == 3
     assert body["result"]["truncated"] is False
+    assert body["result"]["pages"] == 1
+
+
+def test_cli_mid_pagination_failure_exit_code(monkeypatch) -> None:
+    _api_env(monkeypatch)
+    mock_client = MagicMock()
+
+    def _respond(_method, _path, json=None):
+        sql = json["sql"]
+        if "OFFSET" not in sql:
+            return _page_body([_row(i) for i in range(_API_MAX_PAGE)])
+        return {"status": "failed", "error": "timeout", "result": {"rows": []}}
+
+    mock_client.request.side_effect = _respond
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_client
+    mock_cm.__exit__.return_value = None
+
+    with patch("sum_cli.resources.queries.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "queries",
+                "run",
+                "--sql",
+                "select * from t",
+                "--limit",
+                str(_API_MAX_PAGE + 50),
+            ],
+        )
+
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["ok"] is False
+    assert body["error"]["code"] == "QUERY_FAILED"
+    assert body["error"]["data"]["rows_so_far"] == _API_MAX_PAGE
+    assert body["error"]["data"]["page"] == 2
