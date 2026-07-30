@@ -5,8 +5,26 @@ from __future__ import annotations
 from pathlib import Path
 
 from sum_cli.config import load
-from sum_cli.config_store import read_all, set_active_profile, write_all
+from sum_cli.config_store import (
+    DEFAULT_CONFIG_PATH,
+    config_path,
+    read_all,
+    set_active_profile,
+    write_all,
+)
 from sum_cli.constants import ACTIVE_PROFILE_KEY, META_SECTION
+
+
+def test_config_path_uses_shared_default_and_honors_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SUMMATION_CONFIG_FILE", raising=False)
+    assert DEFAULT_CONFIG_PATH == Path.home() / ".summation" / "summation-config"
+    assert config_path() == DEFAULT_CONFIG_PATH
+
+    override = tmp_path / "custom-config"
+    monkeypatch.setenv("SUMMATION_CONFIG_FILE", str(override))
+    assert config_path() == override
 
 
 def test_load_profile_sections(tmp_path: Path, monkeypatch) -> None:

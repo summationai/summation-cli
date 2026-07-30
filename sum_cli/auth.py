@@ -1,6 +1,6 @@
 """Acquire bearer tokens for sum-api.
 
-Credentials come only from profiles in ~/.summation/config. A profile may carry a
+Credentials come only from profiles in ~/.summation/summation-config. A profile may carry a
 persisted device-login credential, a persisted M2M access token, or M2M client
 credentials. Runtime precedence is device-login credential first, then persisted
 M2M token, then fresh M2M exchange. ``SUM_API_*`` environment variables are read
@@ -337,7 +337,7 @@ def revoke_device_login_session(cfg: Config, http: httpx.Client) -> DeviceLoginL
 
 
 def persist_m2m_session(cfg: Config, result: TokenResult) -> Path:
-    """Persist the refreshed bearer token on the profile in ~/.summation/config.
+    """Persist the refreshed bearer token on the profile in ~/.summation/summation-config.
 
     Only the token fields are written. base_url/client_id/client_secret/m2m_scope are
     owned by ``config set-profile`` / ``config import-env``; a token refresh must not

@@ -1,0 +1,11 @@
+"""Shared pytest isolation fixtures."""
+
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolate_summation_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent tests from reading or mutating the user's real shared config."""
+    monkeypatch.setenv("SUMMATION_CONFIG_FILE", str(tmp_path / "summation-config"))

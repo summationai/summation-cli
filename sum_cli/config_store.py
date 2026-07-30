@@ -1,4 +1,4 @@
-"""Read/write ~/.summation/config including active profile and per-profile fields."""
+"""Read/write ~/.summation/summation-config including active profile and per-profile fields."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sum_cli.constants import ACTIVE_PROFILE_KEY, META_SECTION
 
-DEFAULT_CONFIG_PATH = Path.home() / ".summation" / "config"
+DEFAULT_CONFIG_PATH = Path.home() / ".summation" / "summation-config"
 
 
 def config_path() -> Path:

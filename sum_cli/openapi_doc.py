@@ -554,7 +554,7 @@ def _humanize_operation_id(operation_id: str | None) -> str | None:
 # Resource groupings stay curated in this module (see also apply_openapi_help).
 _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "auth": "Inspect authentication state.",
-    "config": "Manage ~/.summation/config profiles and the active working session.",
+    "config": "Manage ~/.summation/summation-config profiles and the active working session.",
     "tenant": "Organization and tenant metadata.",
     "projects": "Manage projects.",
     "chats": "Chats (Addison conversations).",
@@ -617,7 +617,10 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "mkdir": "Create a folder under a root/folder.",
         "delete": "Delete a file or folder by item id (--confirm).",
         "set-defaults": "Persist --root/--path defaults in config (--provider required).",
-        "import-env": "Import SHAREPOINT_* from a skill-style env file into ~/.summation/config.",
+        "import-env": (
+            "Import SHAREPOINT_* from a skill-style env file into "
+            "~/.summation/summation-config."
+        ),
     },
 }
 

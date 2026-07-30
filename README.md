@@ -47,7 +47,7 @@ curl -fsSL https://install.summation.com/sumcli | sh
 | Resource | Description |
 |----------|-------------|
 | `auth` | Inspect authentication state (`whoami`, `status`, `token`, `login`) |
-| `config` | Profiles, active session, and `~/.summation/config` (`use`, `set-project`, `import-env`, …) |
+| `config` | Profiles, active session, and `~/.summation/summation-config` (`use`, `set-project`, `import-env`, …) |
 | `tenant` | Organization and tenant metadata |
 | `projects` | Project CRUD and `current` |
 | `chats` | Addison conversations; SSE → NDJSON with `--follow` on create/reply |
@@ -171,7 +171,10 @@ sumcli tables delete --confirm tbl-...                          # remove from gr
 
 Most users should use device login; admin-managed accounts can use M2M. Power users can define several **environment accounts** in the config file. Each profile is a tenant + API host + credentials/session state (not a Ramp-style `--env` toggle on one identity). Name profiles `{tenant}_{env}` when you have multiple deployments (e.g. tenant sandbox, staging, production).
 
-**Config file:** `~/.summation/config` (TOML), overridable with `SUMMATION_CONFIG_FILE`.
+**Config file:** `~/.summation/summation-config` (TOML), overridable with `SUMMATION_CONFIG_FILE`.
+
+Existing `~/.summation/config` users should rename that file to
+`~/.summation/summation-config`; the TOML format is unchanged.
 
 ```toml
 [_meta]
@@ -204,7 +207,7 @@ Optional per-profile fields: `device_login_credential`, `access_token`, `token_e
 | `config list` | List profiles (secrets not shown) |
 | `config show [profile]` | Show one profile from file (secrets redacted) |
 | `config active` | Resolved effective config: active profile, account, default project, credentials |
-| `config import-env` | Import `SUM_API_*` variables from a skill-style env file into `~/.summation/config` |
+| `config import-env` | Import `SUM_API_*` variables from a skill-style env file into `~/.summation/summation-config` |
 | `config set-profile` | Create or replace a profile (`--confirm` not required) |
 | `config copy-profile` | Clone a profile |
 | `config delete-profile` | Remove a profile (**`--confirm`**) |
@@ -233,7 +236,7 @@ Switch environment account:
 - `sumcli --profile tenant_staging projects list` — one-off; **`--profile` / `--base-url` must come before the subcommand**
 - `export SUMMATION_PROFILE=tenant_staging` — per-process (safe for parallel agents)
 
-**Parallel agents:** do not call `config use` on a shared `~/.summation/config`. Pass `--profile`, and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` in each subprocess. Prefer profiles **without** a file `default_project` when using `SUMMATION_PROJECT`, or pass `--project` on each command (see precedence below).
+**Parallel agents:** do not call `config use` on a shared `~/.summation/summation-config`. Pass `--profile`, and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` in each subprocess. Prefer profiles **without** a file `default_project` when using `SUMMATION_PROJECT`, or pass `--project` on each command (see precedence below).
 
 ## Configuration precedence
 
@@ -278,7 +281,7 @@ Explicit `--project` always wins. When both file and env set a default, **the fi
 
 | Variable | Purpose |
 |----------|---------|
-| `SUMMATION_CONFIG_FILE` | Path to TOML config (default `~/.summation/config`) |
+| `SUMMATION_CONFIG_FILE` | Path to TOML config (default `~/.summation/summation-config`) |
 | `SUMMATION_PROFILE` | Active profile name |
 | `SUMMATION_PROJECT` | Default project ID when the profile has no `default_project` |
 | `SUM_API_BASE_URL` | API host (no trailing slash required; stripped) |
@@ -299,7 +302,7 @@ Unlike the rest of sumcli, external storage commands talk **directly** to extern
 
 > Provider-specific external storage commands exist for SharePoint, but are omitted from this public README to keep it platform-agnostic.
 
-Provider credentials and default root/path are stored in `~/.summation/config` (provider-specific config).
+Provider credentials and default root/path are stored in `~/.summation/summation-config` (provider-specific config).
 
 ## Discovery
 

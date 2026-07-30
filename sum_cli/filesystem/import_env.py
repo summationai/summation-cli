@@ -1,4 +1,4 @@
-"""Import SharePoint settings from a skill-style env file into ~/.summation/config."""
+"""Import SharePoint settings from a skill-style env file into ~/.summation/summation-config."""
 
 from __future__ import annotations
 

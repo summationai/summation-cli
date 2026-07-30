@@ -5,7 +5,7 @@ Azure AD tenant, then drives Microsoft Graph's drive/item API. App-only auth
 requires the application permissions ``Sites.Read.All`` (read) and
 ``Files.ReadWrite.All`` (upload/delete) to be admin-consented for the app.
 
-Credentials and defaults are read from ``~/.summation/config`` first, then
+Credentials and defaults are read from ``~/.summation/summation-config`` first, then
 environment variables (env is mainly for ``import-env`` input and temporary overrides)::
 
     SHAREPOINT_TENANT_ID        Azure AD tenant id (the app's home tenant)
@@ -20,7 +20,7 @@ Import from a skill-style env file::
 
     sumcli filesystem import-env .env --provider sharepoint
 
-Persisted settings in ``~/.summation/config``::
+Persisted settings in ``~/.summation/summation-config``::
 
     [sharepoint]
     tenant_id = "..."

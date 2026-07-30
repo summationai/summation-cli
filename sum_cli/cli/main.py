@@ -168,7 +168,7 @@ def _root(
         None,
         "--profile",
         envvar="SUMMATION_PROFILE",
-        help="Profile in ~/.summation/config.",
+        help="Profile in ~/.summation/summation-config.",
     ),
     base_url: str = typer.Option(  # noqa: B008
         None,
