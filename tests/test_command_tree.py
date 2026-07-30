@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from typer.testing import CliRunner
 
 from sum_cli.cli.main import app
@@ -13,10 +15,13 @@ from sum_cli.openapi_doc import (
 
 runner = CliRunner()
 
+# Rich styles option-like tokens (e.g. --m2m) when FORCE_COLOR is set in CI.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
 
 def _help_text(output: str) -> str:
-    """Collapse Rich/Click wrapping so multi-line blurbs compare equal."""
-    cleaned = output.replace("│", " ")
+    """Strip ANSI and collapse Rich/Click wrapping so multi-line blurbs compare equal."""
+    cleaned = _ANSI_ESCAPE.sub("", output).replace("│", " ")
     return " ".join(cleaned.split())
 
 

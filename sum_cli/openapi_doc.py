@@ -315,22 +315,54 @@ class _CallSiteCollector(ast.NodeVisitor):
 
 
 class _ResourceModuleVisitor(ast.NodeVisitor):
-    """Map Typer command functions to their API call sites."""
+    """Map Typer command functions to their API call sites.
+
+    Call sites may live in same-module helpers (e.g. ``_execute_query``). Commands
+    inherit sites from the transitive closure of Name-callable helpers they invoke.
+    """
 
     def __init__(self, module_path: Path) -> None:
         self.module_path = module_path
         self.resource = module_path.stem
         self.actions: dict[str, list[CallSite]] = {}
+        self._func_nodes: dict[str, ast.FunctionDef] = {}
+        self._func_sites: dict[str, list[CallSite]] = {}
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        action = _typer_command_name(node)
-        if action is None:
-            return
-        collector = _CallSiteCollector(f"{self.module_path}:{node.lineno}")
-        for child in ast.iter_child_nodes(node):
-            collector.visit(child)
-        if collector.sites:
-            self.actions[action] = collector.sites
+    def visit_Module(self, node: ast.Module) -> None:
+        for child in node.body:
+            if isinstance(child, ast.FunctionDef):
+                collector = _CallSiteCollector(f"{self.module_path}:{child.lineno}")
+                for item in ast.iter_child_nodes(child):
+                    collector.visit(item)
+                self._func_nodes[child.name] = child
+                self._func_sites[child.name] = collector.sites
+        for name, func in self._func_nodes.items():
+            action = _typer_command_name(func)
+            if action is None:
+                continue
+            sites = self._reachable_sites(name)
+            if sites:
+                self.actions[action] = sites
+
+    def _reachable_sites(self, func_name: str, seen: set[str] | None = None) -> list[CallSite]:
+        if seen is None:
+            seen = set()
+        if func_name in seen or func_name not in self._func_nodes:
+            return []
+        seen.add(func_name)
+        sites = list(self._func_sites.get(func_name, []))
+        for callee in _name_callees(self._func_nodes[func_name]):
+            sites.extend(self._reachable_sites(callee, seen))
+        return sites
+
+
+def _name_callees(node: ast.AST) -> set[str]:
+    """Same-module helper names invoked as bare calls (``helper(...)``)."""
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            names.add(child.func.id)
+    return names
 
 
 def _typer_command_name(node: ast.FunctionDef) -> str | None:
