@@ -9,8 +9,10 @@ import pytest
 from typer.testing import CliRunner
 
 from sum_cli.cli.main import app
+from sum_cli.client import ApiError
 from sum_cli.resources.queries import (
     _API_MAX_PAGE,
+    _execute_query,
     _extract_query_rows,
     _page_sql,
     _run_paginated,
@@ -40,6 +42,19 @@ def test_extract_query_rows_nested() -> None:
 def test_extract_query_rows_flat_fallback() -> None:
     assert _extract_query_rows({"rows": [_row(1)]}) == [_row(1)]
     assert _extract_query_rows({"results": [_row(1)]}) == [_row(1)]
+
+
+def test_extract_query_rows_rejects_non_dict() -> None:
+    assert _extract_query_rows([_row(1)]) == []
+    assert _extract_query_rows("nope") == []
+
+
+def test_execute_query_normalizes_list_payload() -> None:
+    client = MagicMock()
+    client.request.return_value = [_row(1), _row(2)]
+    data = _execute_query(client, "select 1", 10)
+    assert data == {"rows": [_row(1), _row(2)]}
+    assert _extract_query_rows(data) == [_row(1), _row(2)]
 
 
 def test_page_sql_offset() -> None:
@@ -118,7 +133,36 @@ def test_auto_paginate_stops_when_source_exhausted() -> None:
     assert result["truncated"] is False
 
 
-def test_mid_pagination_failure_emits_error() -> None:
+def test_mid_pagination_api_error_emits_query_failed() -> None:
+    """Live API failures are non-200 → ApiError; surface with page context."""
+    client = MagicMock()
+
+    def _respond(_method, _path, json=None):
+        sql = json["sql"]
+        if "OFFSET" not in sql:
+            return _page_body([_row(i) for i in range(_API_MAX_PAGE)])
+        raise ApiError(
+            400,
+            {
+                "error": {
+                    "code": "query_failed",
+                    "message": "relation does not exist",
+                }
+            },
+            method="POST",
+            url="https://example.com/v1/query-executions",
+        )
+
+    client.request.side_effect = _respond
+
+    with pytest.raises(SystemExit) as exc:
+        _run_paginated(client, "select * from t", desired=_API_MAX_PAGE + 50)
+
+    assert exc.value.code == 1
+
+
+def test_mid_pagination_status_failed_defense_in_depth() -> None:
+    """Keep status=failed handling if a 200 ever carries an application failure."""
     client = MagicMock()
 
     def _respond(_method, _path, json=None):
@@ -162,7 +206,7 @@ def test_cli_queries_run_extracts_nested_rows(monkeypatch) -> None:
     assert body["result"]["pages"] == 1
 
 
-def test_cli_mid_pagination_failure_exit_code(monkeypatch) -> None:
+def test_cli_mid_pagination_api_error_exit_code(monkeypatch) -> None:
     _api_env(monkeypatch)
     mock_client = MagicMock()
 
@@ -170,7 +214,12 @@ def test_cli_mid_pagination_failure_exit_code(monkeypatch) -> None:
         sql = json["sql"]
         if "OFFSET" not in sql:
             return _page_body([_row(i) for i in range(_API_MAX_PAGE)])
-        return {"status": "failed", "error": "timeout", "result": {"rows": []}}
+        raise ApiError(
+            400,
+            {"error": {"code": "query_failed", "message": "timeout"}},
+            method="POST",
+            url="https://example.com/v1/query-executions",
+        )
 
     mock_client.request.side_effect = _respond
     mock_cm = MagicMock()
@@ -194,5 +243,8 @@ def test_cli_mid_pagination_failure_exit_code(monkeypatch) -> None:
     body = json.loads(result.stdout)
     assert body["ok"] is False
     assert body["error"]["code"] == "QUERY_FAILED"
+    assert "timeout" in body["error"]["message"]
     assert body["error"]["data"]["rows_so_far"] == _API_MAX_PAGE
     assert body["error"]["data"]["page"] == 2
+    assert body["error"]["data"]["offset"] == _API_MAX_PAGE
+    assert body["error"]["data"]["query"]["http_status"] == 400

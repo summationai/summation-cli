@@ -7,8 +7,9 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
-from sum_cli.output import emit, emit_error, err, ok
+from sum_cli.client import ApiError
 from sum_cli.commands import ProfileOption, api_client, unwrap_data
+from sum_cli.output import emit, emit_error, err, ok
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -37,9 +38,7 @@ def _page_sql(sql: str, offset: int, page_limit: int) -> str:
 
 
 def _extract_query_rows(data: object) -> list[Any]:
-    """Pull row list from query-execution payloads (nested or flat)."""
-    if isinstance(data, list):
-        return data
+    """Pull row list from query-execution payloads (nested or flat dict)."""
     if not isinstance(data, dict):
         return []
     result = data.get("result")
@@ -55,10 +54,28 @@ def _extract_query_rows(data: object) -> list[Any]:
 
 
 def _page_failed(data: object) -> bool:
+    """Defense-in-depth: real API failures usually arrive as ApiError (non-200)."""
     if not isinstance(data, dict):
         return False
     status = str(data.get("status", "")).upper()
     return status in _QUERY_FAILED_STATES
+
+
+def _api_error_detail(exc: ApiError) -> str:
+    """Best-effort message from a problem+json (or opaque) ApiError body."""
+    body = exc.body
+    if isinstance(body, dict):
+        err_obj = body.get("error") or body
+        if isinstance(err_obj, dict):
+            for key in ("message", "detail", "title"):
+                value = err_obj.get(key)
+                if value:
+                    return str(value)
+        for key in ("message", "detail", "title"):
+            value = body.get(key)
+            if value:
+                return str(value)
+    return str(body)
 
 
 def _emit_query_failed(
@@ -98,7 +115,12 @@ def _execute_query(client: Any, sql: str, page_limit: int) -> dict[str, Any]:
         json={"sql": sql, "limit": page_limit},
     )
     data = unwrap_data(body or {}, "data") or body
-    return data if isinstance(data, dict) else {"raw": data}
+    if isinstance(data, dict):
+        return data
+    # Flat list payloads are rare; normalize so _extract_query_rows can read them.
+    if isinstance(data, list):
+        return {"rows": data}
+    return {"raw": data}
 
 
 def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
@@ -113,7 +135,22 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
         page_sql = (
             _page_sql(query_sql, offset, page_limit) if offset > 0 else _strip_sql(query_sql)
         )
-        data = _execute_query(client, page_sql, page_limit)
+        try:
+            data = _execute_query(client, page_sql, page_limit)
+        except ApiError as exc:
+            # Live API: query failures are non-200 problem+json → ApiError here,
+            # not a 200 body with status=failed. Re-emit with pagination context.
+            _emit_query_failed(
+                {
+                    "status": "failed",
+                    "error": _api_error_detail(exc),
+                    "http_status": exc.status,
+                    "body": exc.body,
+                },
+                page=len(pages) + 1,
+                offset=offset,
+                rows_so_far=len(rows),
+            )
         if _page_failed(data):
             _emit_query_failed(
                 data,
