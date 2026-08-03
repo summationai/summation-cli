@@ -7,7 +7,6 @@ from typing import Annotated
 
 import typer
 
-from sum_cli.output import action, emit, emit_error, err, ok, param, truncate_list
 from sum_cli.commands import (
     ProfileOption,
     api_client,
@@ -15,6 +14,7 @@ from sum_cli.commands import (
     require_project,
     unwrap_data,
 )
+from sum_cli.output import action, emit, emit_error, err, ok, param, truncate_list
 from sum_cli.stream_options import (
     FollowOption,
     WaitOption,
