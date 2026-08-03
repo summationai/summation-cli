@@ -1,6 +1,6 @@
 """Acquire bearer tokens for sum-api.
 
-Credentials come only from profiles in ~/.summation/summation-config. A profile may carry a
+Credentials come only from profiles in the shared config file (default ~/.summation/summation-config; override with SUMMATION_CONFIG_FILE). A profile may carry a
 persisted device-login credential, a persisted M2M access token, or M2M client
 credentials. Runtime precedence is device-login credential first, then persisted
 M2M token, then fresh M2M exchange. ``SUM_API_*`` environment variables are read
