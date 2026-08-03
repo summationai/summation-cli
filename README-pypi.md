@@ -40,7 +40,7 @@ uv tool upgrade summation-cli   # later upgrades
 | Resource      | Description                                                                                                                                          |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auth`        | Inspect authentication state (`whoami`, `status`, `token`, `login`, `logout`)                                                                        |
-| `config`      | Profiles, active session, and `~/.summation/config` (`use`, `set-project`, `import-env`, …)                                                          |
+| `config`      | Profiles, active session, and `~/.summation/summation-config` (`use`, `set-project`, `import-env`, …)                                               |
 | `tenant`      | Organization and tenant metadata                                                                                                                     |
 | `projects`    | Project CRUD and `current`                                                                                                                           |
 | `chats`       | Addison conversations; SSE → NDJSON with `--follow` on create/reply                                                                                  |
@@ -67,7 +67,10 @@ sumcli auth login
 sumcli auth whoami | jq .
 ```
 
-`auth login` prints a device code and a URL. Approve it in the browser, and the CLI stores the session in `~/.summation/config`.
+`auth login` prints a device code and a URL. Approve it in the browser, and the CLI stores the session in `~/.summation/summation-config`.
+
+Existing `~/.summation/config` users should rename that file to
+`~/.summation/summation-config`; the TOML format is unchanged.
 
 **Optional — named profile for a non-default host:**
 

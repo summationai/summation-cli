@@ -1,4 +1,4 @@
-"""Persist and resolve filesystem defaults in ~/.summation/config ([filesystem] section)."""
+"""Persist and resolve filesystem defaults in the shared Summation config."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def resolve_root(fs: FileSystem, explicit: str | None) -> str:
 
     Precedence (highest first):
       1. CLI flag (--root)
-      2. ~/.summation/config [filesystem] (``sumcli filesystem set-defaults``)
+      2. ~/.summation/summation-config [filesystem] (``sumcli filesystem set-defaults``)
       3. Provider env (e.g. SHAREPOINT_ROOT)
       4. Auto-pick when ``roots()`` returns exactly one drive (cached per backend instance)
     """

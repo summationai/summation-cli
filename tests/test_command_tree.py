@@ -59,8 +59,10 @@ def test_typer_help_uses_openapi_action_blurbs():
     for resource, meta in resources.items():
         group = runner.invoke(app, [resource, "--help"])
         assert group.exit_code == 0, group.stdout
-        assert meta["description"] in group.stdout
         group_help = _help_text(group.stdout)
+        assert _help_text(meta["description"]) in group_help, (
+            f"{resource}: missing description in group help"
+        )
         for action, blurb in meta["actions"].items():
             assert _help_text(blurb) in group_help, (
                 f"{resource} {action}: missing blurb in group help"
