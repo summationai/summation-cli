@@ -1,4 +1,4 @@
-"""Read/write ~/.summation/summation-config including active profile and per-profile fields."""
+"""Read/write shared Summation config (default ~/.summation/summation-config; override with SUMMATION_CONFIG_FILE), including active profile and per-profile fields."""
 
 from __future__ import annotations
 
