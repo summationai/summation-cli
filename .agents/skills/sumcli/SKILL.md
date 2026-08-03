@@ -149,14 +149,14 @@ sumcli chats feedback --chat chat-... --message msg-... --rating thumbs_down \
 
 **Best practices**
 
-1. **Feedback is append-only, not an upsert.** Every call creates a new record, and the API accepts contradictory ratings on the same message without complaint. There is no edit, no delete, and no "current rating" — a mistake cannot be retracted, only buried under another record. Get it right the first time.
+1. **Feedback is append-only, not an upsert.** Every call creates a new record. The API also accepts opposite ratings on the same message. There is no edit, no delete, and no "current rating". You cannot retract a mistake. A new record does not remove or hide the old one. Get it right the first time.
 2. **Never file test or placeholder feedback against a real message.** These records go to human quality review. To exercise the command, use a throwaway chat in a sandbox project and say so in `--details`. Better: rely on the test suite (`tests/test_chats_feedback.py`), which covers the payload without writing to any tenant.
 3. **Rate only what the user judged.** An agent must not invent a rating. File feedback when the user says the answer was wrong or good — pass on their verdict, do not substitute your own.
 4. **Always send `--details` with `thumbs_down`.** A bare negative rating tells a reviewer nothing. State what was wrong and what was expected. Cite the specific claim, number, or instruction that failed.
 5. **Pick the narrowest `--reason`.** Reach for `other` only when nothing else fits, and then `--details` is mandatory to be useful at all.
 6. **Do not put secrets, PII, or raw customer rows in `--details`.** It is stored and read by humans. Describe the defect, do not paste the data.
 
-**Getting the IDs.** `chats create` and `chats reply` return `messageId` in the terminal payload but **not** the chat ID — the emitted "Reply" next action shows `chat-id: null`. Recover it with `chats list`:
+**Getting the IDs.** `chats create` and `chats reply` return `messageId` in the terminal payload. They do **not** return the chat ID. The emitted "Reply" next action shows `chat-id: null`. Recover the chat ID with `chats list`:
 
 ```bash
 CHAT=$(sumcli chats list --count 1 | jq -r '.result.chats[0].id')

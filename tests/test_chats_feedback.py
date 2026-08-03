@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from sum_cli.cli.main import app
-from sum_cli.resources.chats import DETAILS_MAX_LEN
+from sum_cli.resources.chats import _DETAILS_MAX_LEN
 
 runner = CliRunner()
 
@@ -114,7 +114,7 @@ def test_feedback_rejects_unknown_reason() -> None:
 
 def test_feedback_rejects_overlong_details() -> None:
     result, client = _invoke(
-        [*_BASE_ARGS, "--rating", "thumbs_down", "--details", "x" * (DETAILS_MAX_LEN + 1)]
+        [*_BASE_ARGS, "--rating", "thumbs_down", "--details", "x" * (_DETAILS_MAX_LEN + 1)]
     )
 
     assert result.exit_code != 0
@@ -126,8 +126,34 @@ def test_feedback_rejects_overlong_details() -> None:
 
 def test_feedback_accepts_details_at_limit() -> None:
     result, client = _invoke(
-        [*_BASE_ARGS, "--rating", "thumbs_down", "--details", "x" * DETAILS_MAX_LEN]
+        [*_BASE_ARGS, "--rating", "thumbs_down", "--details", "x" * _DETAILS_MAX_LEN]
     )
 
     assert result.exit_code == 0, result.stdout
-    assert len(client.request.call_args.kwargs["json"]["details"]) == DETAILS_MAX_LEN
+    assert len(client.request.call_args.kwargs["json"]["details"]) == _DETAILS_MAX_LEN
+
+
+def test_overlong_details_reported_before_missing_project() -> None:
+    """Pure input validation must not need a resolved project to report.
+
+    Without this ordering a user with no default project sees NO_PROJECT first,
+    fixes it, then re-runs and only then learns the details were too long.
+    """
+    result, client = _invoke(
+        [
+            "chats",
+            "feedback",
+            "--chat",
+            "chat_1",
+            "--message",
+            "msg_1",
+            "--rating",
+            "thumbs_down",
+            "--details",
+            "x" * (_DETAILS_MAX_LEN + 1),
+        ]
+    )
+
+    assert result.exit_code != 0
+    client.request.assert_not_called()
+    assert json.loads(result.stdout)["error"]["code"] == "DETAILS_TOO_LONG"
