@@ -96,10 +96,6 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/v1/connections/app/*/disconnect"): "App connector disconnect not exposed in sumcli.",
     ("POST", "/v1/grid/tables"): "Grid calculation-table creation not exposed in sumcli.",
     ("POST", "/v1/grid/tables/*/materialize"): "Grid materialize not exposed in sumcli.",
-    (
-        "POST",
-        "/v1/projects/*/conversations/*/messages/*/feedback",
-    ): "Chat feedback not exposed in sumcli.",
     ("GET", "/v1/projects/*/reports"): "Report listing is via files, not a dedicated command.",
     ("DELETE", "/v1/projects/*/reports/*"): "Report delete is via files delete.",
     ("GET", "/v1/projects/*/reports/*/content"): "Report content export not exposed in sumcli.",

@@ -96,7 +96,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `tables` | grid tables, CSV `import`, data |
 | `views` | Summation views |
 | `queries` | read-only SQL (`queries run --sql` / `--file`); cap rows with SQL `LIMIT` or `--limit` (API default 100, max 10000/request; higher auto-paginates) |
-| `chats` | Addison; `--follow` streams NDJSON |
+| `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |
 | `reports` | generate/verify (`.sdoc`); default `--follow` on |
 | `playbooks` | discovery |
 | `files` | project file upload/download/list/delete |
@@ -134,6 +134,35 @@ sumcli chats create -m "hello" --follow              # NDJSON stream
 ```
 
 `--wait` (default) drains SSE; `--follow` streams progress NDJSON (requires `--wait`). `--no-wait --follow` → `INVALID_FLAGS`, exit 1.
+
+### Chat feedback
+
+Rate one assistant message so Summation can review answer quality. Requires `agent:write` scope.
+
+```bash
+sumcli chats feedback --chat chat-... --message msg-... --rating thumbs_down \
+  --reason incorrect_info \
+  --details "Cited 2023 revenue; the question asked for Q4 2024."
+```
+
+`--rating` is required (`thumbs_up`, `thumbs_down`). `--reason` is optional (`incorrect_info`, `instructions_ignored`, `unsafe_or_problematic`, `bad_response`, `dont_like_style`, `other`). `--details` is optional free text, max **4000** characters — the CLI rejects longer input as `DETAILS_TOO_LONG` (exit 1) without calling the API. Bad `--rating`/`--reason` values fail at parse time (exit **2**).
+
+**Best practices**
+
+1. **Feedback is append-only, not an upsert.** Every call creates a new record. The API also accepts opposite ratings on the same message. There is no edit, no delete, and no "current rating". You cannot retract a mistake. A new record does not remove or hide the old one. Get it right the first time.
+2. **Never file test or placeholder feedback against a real message.** These records go to human quality review. To exercise the command, use a throwaway chat in a sandbox project and say so in `--details`. Better: rely on the test suite (`tests/test_chats_feedback.py`), which covers the payload without writing to any tenant.
+3. **Rate only what the user judged.** An agent must not invent a rating. File feedback when the user says the answer was wrong or good — pass on their verdict, do not substitute your own.
+4. **Always send `--details` with `thumbs_down`.** A bare negative rating tells a reviewer nothing. State what was wrong and what was expected. Cite the specific claim, number, or instruction that failed.
+5. **Pick the narrowest `--reason`.** Reach for `other` only when nothing else fits, and then `--details` is mandatory to be useful at all.
+6. **Do not put secrets, PII, or raw customer rows in `--details`.** It is stored and read by humans. Describe the defect, do not paste the data.
+
+**Getting the IDs.** `chats create` and `chats reply` return `messageId` in the terminal payload. They do **not** return the chat ID. The emitted "Reply" next action shows `chat-id: null`. Recover the chat ID with `chats list`:
+
+```bash
+CHAT=$(sumcli chats list --count 1 | jq -r '.result.chats[0].id')
+```
+
+Track the chat ID from the `chats list` / `chats show` response rather than expecting it in a `create` result.
 
 ## Output & errors
 
