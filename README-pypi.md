@@ -40,7 +40,7 @@ uv tool upgrade summation-cli   # later upgrades
 | Resource      | Description                                                                                                                                          |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auth`        | Inspect authentication state (`whoami`, `status`, `token`, `login`, `logout`)                                                                        |
-| `config`      | Profiles, active session, and `~/.summation/summation-config` (`use`, `set-project`, `import-env`, …)                                               |
+| `config`      | Profiles, active session, and `~/.summation/summation-config` (`use`, `set-project`, `import-env`, …)                                                |
 | `tenant`      | Organization and tenant metadata                                                                                                                     |
 | `projects`    | Project CRUD and `current`                                                                                                                           |
 | `chats`       | Addison conversations; SSE → NDJSON with `--follow` on create/reply                                                                                  |
@@ -50,7 +50,7 @@ uv tool upgrade summation-cli   # later upgrades
 | `files`       | Project-scoped files (`upload`, `download`, `list`, `show`, `import`, `delete`)                                                                      |
 | `filesystem`  | Connected filesystem roots such as SharePoint (`roots`, `list`, `upload`, `download`, `mkdir`, `delete`, `import-env`, `set-defaults`)               |
 | `catalog`     | Project catalog entries (`list`, `show`, `attach`, `detach`, `refresh`)                                                                              |
-| `connections` | External data source connections (CRUD, `test`, `browse`)                                                                                            |
+| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
 | `tables`      | Grid tables and CSV import (`tables import` is a multi-step HTTP workflow); also `append`, `data`, `import-status`, `catalog-show`, `catalog-update` |
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
 | `grid`        | Grid `status`, `create`, `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
@@ -210,7 +210,7 @@ Project-scoped commands accept `--project` when no default project is configured
 
 ## Behavior
 
-- Destructive commands require `**--confirm**`: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` is gated because a manual run delivers real email immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` is gated because a manual run delivers real email immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).
