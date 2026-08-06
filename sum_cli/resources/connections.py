@@ -370,3 +370,165 @@ def list_snapshots(
             }
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# App connections — /v1/connections/app
+#
+# A separate resource from the data connections above: third-party apps
+# (NetSuite, SharePoint, Salesforce ...) whose tools the agent can call during
+# chat, rather than sources you query. sum-api tags them "App Connectors" vs
+# "Data Connectors" under a shared URL prefix, so they live in this group with
+# an ``app-`` prefix — the bare verbs belong to the data family, and the ``apps``
+# resource name is reserved for SumApps (/v1/sum-apps).
+#
+# Two nouns, per the API's own vocabulary:
+#   * app connector — a connectable type in the catalog (key, no id)
+#   * app connection — an instance the caller has connected (id, status)
+# ---------------------------------------------------------------------------
+
+
+def _emit_app_connection(body: object, **extra: object) -> None:
+    emit(ok({"connection": unwrap_data(body or {}, "data") or body, **extra}))
+
+
+def _set_app_chat_enabled(
+    ctx: typer.Context, connection_id: str, profile: str | None, *, enabled: bool
+) -> None:
+    """PATCH the connection's only writable field (``enabled_for_chat``)."""
+    with api_client(ctx, profile) as c:
+        body = c.request(
+            "PATCH",
+            f"/v1/connections/app/{connection_id}",
+            json={"enabled_for_chat": enabled},
+        )
+    _emit_app_connection(body, enabled_for_chat=enabled)
+
+
+@app.command("app-catalog")
+def app_catalog(
+    ctx: typer.Context,
+    count: Annotated[int | None, typer.Option("--count")] = None,
+    profile: ProfileOption = None,
+) -> None:
+    with api_client(ctx, profile) as c:
+        body = c.request("GET", "/v1/connections/app/catalog")
+    data = unwrap_data(body or {}, "data")
+    listed = truncate_list(extract_list(data, "apps"), count=count)
+    emit(ok({"apps": listed["items"], **{k: v for k, v in listed.items() if k != "items"}}))
+
+
+@app.command("app-tools")
+def app_tools(
+    ctx: typer.Context,
+    app_key: Annotated[
+        str,
+        typer.Argument(
+            help="Catalog app key as returned by `connections app-catalog`, e.g. netsuite."
+        ),
+    ],
+    count: Annotated[int | None, typer.Option("--count")] = None,
+    profile: ProfileOption = None,
+) -> None:
+    with api_client(ctx, profile) as c:
+        body = c.request("GET", f"/v1/connections/app/catalog/{app_key}/tools")
+    data = unwrap_data(body or {}, "data")
+    listed = truncate_list(extract_list(data, "tools"), count=count)
+    emit(
+        ok(
+            {
+                "tools": listed["items"],
+                **{k: v for k, v in listed.items() if k != "items"},
+                "app_key": app_key,
+            }
+        )
+    )
+
+
+@app.command("app-list")
+def app_list(
+    ctx: typer.Context,
+    enabled_for_chat_only: Annotated[
+        bool,
+        typer.Option(
+            "--enabled-for-chat-only",
+            help="Return only connections the agent may use during chat.",
+        ),
+    ] = False,
+    count: Annotated[int | None, typer.Option("--count")] = None,
+    profile: ProfileOption = None,
+) -> None:
+    params: dict = {}
+    # Send only when set: the server already defaults to false, and an explicit
+    # false would pin the default if it ever changes.
+    if enabled_for_chat_only:
+        params["enabled_for_chat_only"] = True
+    with api_client(ctx, profile) as c:
+        body = c.request("GET", "/v1/connections/app", params=params)
+    data = unwrap_data(body or {}, "data")
+    listed = truncate_list(extract_list(data, "connections"), count=count)
+    emit(ok({"connections": listed["items"], **{k: v for k, v in listed.items() if k != "items"}}))
+
+
+@app.command("app-show")
+def app_show(
+    ctx: typer.Context,
+    connection_id: Annotated[str, typer.Argument(help="App connection id.")],
+    profile: ProfileOption = None,
+) -> None:
+    with api_client(ctx, profile) as c:
+        body = c.request("GET", f"/v1/connections/app/{connection_id}")
+    _emit_app_connection(body)
+
+
+@app.command("app-enable-chat")
+def app_enable_chat(
+    ctx: typer.Context,
+    connection_id: Annotated[str, typer.Argument(help="App connection id.")],
+    profile: ProfileOption = None,
+) -> None:
+    _set_app_chat_enabled(ctx, connection_id, profile, enabled=True)
+
+
+@app.command("app-disable-chat")
+def app_disable_chat(
+    ctx: typer.Context,
+    connection_id: Annotated[str, typer.Argument(help="App connection id.")],
+    profile: ProfileOption = None,
+) -> None:
+    _set_app_chat_enabled(ctx, connection_id, profile, enabled=False)
+
+
+@app.command("app-disconnect")
+def app_disconnect(
+    ctx: typer.Context,
+    connection_id: Annotated[str, typer.Argument(help="App connection id.")],
+    profile: ProfileOption = None,
+) -> None:
+    with api_client(ctx, profile) as c:
+        body = c.request("POST", f"/v1/connections/app/{connection_id}/disconnect")
+    emit(
+        ok(
+            {
+                "disconnected": connection_id,
+                "result": unwrap_data(body or {}, "data") or body,
+            }
+        )
+    )
+
+
+@app.command("app-delete")
+def app_delete(
+    ctx: typer.Context,
+    connection_id: Annotated[str, typer.Argument(help="App connection id.")],
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    profile: ProfileOption = None,
+) -> None:
+    require_confirm(confirm, action_name="connections app-delete")
+    with api_client(ctx, profile) as c:
+        c.request(
+            "DELETE",
+            f"/v1/connections/app/{connection_id}",
+            params=api_confirm_params(),
+        )
+    emit(ok({"deleted": connection_id}))
