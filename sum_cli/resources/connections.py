@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated
 
 import typer
 
@@ -16,7 +16,8 @@ from sum_cli.commands import (
     require_confirm,
     unwrap_data,
 )
-from sum_cli.output import emit, emit_error, err, ok, truncate_list
+from sum_cli.output import emit, ok, truncate_list
+from sum_cli.output import invalid_request as _invalid
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -25,13 +26,11 @@ app = typer.Typer(no_args_is_help=True)
 _MAX_ATTACH_DATASETS = 100
 # GET /v1/connections/data/{id}/snapshots caps ``limit`` at 50 (ge=1, le=50).
 _MAX_SNAPSHOT_LIMIT = 50
-
-
-def _invalid(message: str, fix: str) -> NoReturn:
-    # NoReturn, not None: emit_error exits, so every call site ends the command.
-    # Annotating it lets a type checker flag a real fall-through instead of
-    # leaving the next reader to go check output.py (matches schedules.py).
-    emit_error(err("INVALID_REQUEST", message, fix))
+# Body keys ConnectionWriteRequest accepts from --config-file. ``name``/``type``/
+# ``description`` are excluded: they come from flags, so a file key would fight the
+# command line. Anything else is rejected rather than dropped -- a silently ignored
+# snapshot_config would leave snapshotting off with exit 0.
+_CONFIG_FILE_KEYS = ("config", "secrets", "snapshot_config")
 
 
 def _load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
@@ -94,7 +93,12 @@ def create_connection(
     name: Annotated[str, typer.Option("--name")],
     type: Annotated[str, typer.Option("--type")],
     config_file: Annotated[
-        Path | None, typer.Option("--config-file", help="JSON config+secrets.")
+        Path | None,
+        typer.Option(
+            "--config-file",
+            help="JSON object with any of: config, secrets, snapshot_config. "
+            "Unknown top-level keys are rejected.",
+        ),
     ] = None,
     description: Annotated[str | None, typer.Option("--description")] = None,
     profile: ProfileOption = None,
@@ -108,10 +112,21 @@ def create_connection(
             "--config-file",
             shape_hint='{"config": {...}, "secrets": {...}}',
         )
+        unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
+        if unknown:
+            _invalid(
+                f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
+                f"Use only {', '.join(_CONFIG_FILE_KEYS)}; set name, type, and "
+                "description with their flags.",
+            )
         # Assign, never setdefault: the file is the caller's explicit input and must
         # win over anything already on the payload.
         payload["config"] = extra.get("config", {})
         payload["secrets"] = extra.get("secrets", {})
+        if "snapshot_config" in extra:
+            # Only when present: the spec treats an omitted snapshot_config as "leave
+            # the policy unchanged", so an empty default would be a real instruction.
+            payload["snapshot_config"] = extra["snapshot_config"]
     with api_client(ctx, profile) as c:
         body = c.request("POST", "/v1/connections/data", json=payload)
     emit(ok({"connection": unwrap_data(body or {}, "data") or body}))
@@ -235,7 +250,8 @@ def attach_datasets(
         typer.Option(
             "--snapshot-enabled/--no-snapshot-enabled",
             help="Opt these datasets into snapshotting regardless of the connection's policy. "
-            "Omit to inherit the connection setting.",
+            "Omit to inherit the connection setting. With --datasets-file, this "
+            "overrides snapshot_enabled on every entry.",
         ),
     ] = None,
     datasets_file: Annotated[

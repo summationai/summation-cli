@@ -189,6 +189,103 @@ def test_create_rejects_unreadable_config_file(tmp_path: Path) -> None:
     client.request.assert_not_called()
 
 
+def test_create_forwards_snapshot_config_from_file(tmp_path: Path) -> None:
+    """Regression: snapshot_config is a ConnectionWriteRequest field, and was dropped
+    silently, so a user following the snapshot workflow got exit 0 and no policy."""
+    config_file = tmp_path / "http.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "config": {"base_url": "https://api.example.com"},
+                "secrets": {"token": "t"},
+                "snapshot_config": {"enabled": True, "version": 1},
+            }
+        )
+    )
+    _, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "HTTP",
+            "--config-file",
+            str(config_file),
+        ],
+        {"data": {}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent["snapshot_config"] == {"enabled": True, "version": 1}
+
+
+def test_create_omits_snapshot_config_when_file_lacks_it(tmp_path: Path) -> None:
+    """An absent snapshot_config means "leave the policy unchanged"; sending an empty
+    object would be a real instruction, so the key must not appear at all."""
+    config_file = tmp_path / "pg.json"
+    config_file.write_text(json.dumps({"config": {"host": "h"}, "secrets": {}}))
+    _, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "POSTGRES",
+            "--config-file",
+            str(config_file),
+        ],
+        {"data": {}},
+    )
+    assert "snapshot_config" not in client.request.call_args[1]["json"]
+
+
+@pytest.mark.parametrize("key", ["snapshotConfig", "name", "type", "description", "typo"])
+def test_create_rejects_unknown_config_file_keys(tmp_path: Path, key: str) -> None:
+    """Unknown keys were dropped without a word. A camelCase or misspelled
+    snapshot_config is exactly the case that must not exit 0."""
+    config_file = tmp_path / "sf.json"
+    config_file.write_text(json.dumps({"config": {"host": "h"}, key: "whatever"}))
+    result, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(config_file),
+        ]
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert key in body["error"]["message"]
+    client.request.assert_not_called()
+
+
+def test_create_reports_every_unknown_config_file_key(tmp_path: Path) -> None:
+    """All offenders at once, so the caller fixes the file in one pass."""
+    config_file = tmp_path / "sf.json"
+    config_file.write_text(json.dumps({"alpha": 1, "zeta": 2, "config": {}}))
+    result, _ = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(config_file),
+        ]
+    )
+    message = json.loads(result.stdout)["error"]["message"]
+    assert "alpha" in message
+    assert "zeta" in message
+
+
 def test_attach_datasets_hint_names_datasets_shape(tmp_path: Path) -> None:
     """The shared loader must report the caller's shape, not a fixed one."""
     spec_file = tmp_path / "datasets.json"
