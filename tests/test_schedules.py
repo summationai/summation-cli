@@ -434,6 +434,105 @@ def test_update_omitted_paused_sends_no_key() -> None:
     assert "config" not in client.request.call_args[1]["json"]
 
 
+def test_update_defaults_playbook_from_existing_target() -> None:
+    """sum-api rejects a target change, so the stored playbook is the only valid value."""
+    result, client = _run(
+        ["schedules", "update", "sch_1", "--project", "proj_1", "--type", "daily"],
+        {"data": {"id": "sch_1", "target": {"playbookId": "pb_stored"}}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["target"] == {
+        "project_id": "proj_1",
+        "playbook_id": "pb_stored",
+    }
+
+
+def test_update_accepts_snake_case_playbook_id() -> None:
+    result, client = _run(
+        ["schedules", "update", "sch_1", "--project", "proj_1", "--type", "daily"],
+        {"data": {"target": {"playbook_id": "pb_snake"}}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["target"]["playbook_id"] == "pb_snake"
+
+
+def test_update_explicit_playbook_overrides_stored_target() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "update",
+            "sch_1",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_explicit",
+            "--type",
+            "daily",
+        ],
+        {"data": {"target": {"playbookId": "pb_stored"}}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["target"]["playbook_id"] == "pb_explicit"
+
+
+def test_update_errors_when_no_playbook_available() -> None:
+    """No stored target and no flag: report it rather than PUT a null playbook_id."""
+    result, client = _run(
+        ["schedules", "update", "sch_1", "--project", "proj_1", "--type", "daily"],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    assert all(call[0][0] != "PUT" for call in client.request.call_args_list)
+
+
+def test_update_warns_about_unmapped_config_keys() -> None:
+    """A config key this CLI cannot map is dropped by the full-replace PUT: say so."""
+    result, _ = _run(
+        [
+            "schedules",
+            "update",
+            "sch_1",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+        ],
+        {
+            "data": {
+                "id": "sch_1",
+                "config": {"emailRecipients": [{"email": "a@b.c"}], "retentionDays": 30},
+            }
+        },
+    )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)["result"]
+    assert body["unmapped_config_keys"] == ["retentionDays"]
+    assert "retentionDays" in body["warning"]
+
+
+def test_update_does_not_warn_about_known_read_only_keys() -> None:
+    """targetAvailable is read-only by design, not an unrecognized field."""
+    result, _ = _run(
+        [
+            "schedules",
+            "update",
+            "sch_1",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+        ],
+        {"data": {"config": {"paused": False, "targetAvailable": True}}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "unmapped_config_keys" not in json.loads(result.stdout)["result"]
+
+
 def test_update_preserves_existing_config() -> None:
     """PUT is a full replace, so unspecified config must be carried over.
 
@@ -629,7 +728,7 @@ def test_runs_lists_and_truncates() -> None:
 
 def test_run_now_sends_reason() -> None:
     result, client = _run(
-        ["schedules", "run", "sch_1", "--reason", "backfill"],
+        ["schedules", "run", "sch_1", "--confirm", "--reason", "backfill"],
         {"data": {"id": "run_1"}},
     )
     assert result.exit_code == 0, result.stdout
@@ -640,11 +739,72 @@ def test_run_now_sends_reason() -> None:
 
 def test_run_now_sends_effective_run_at() -> None:
     result, client = _run(
-        ["schedules", "run", "sch_1", "--effective-run-at", "2026-08-06T09:30:00Z"],
+        ["schedules", "run", "sch_1", "--confirm", "--effective-run-at", "2026-08-06T09:30:00Z"],
         {"data": {"id": "run_1"}},
     )
     assert result.exit_code == 0, result.stdout
     assert client.request.call_args[1]["json"] == {"effective_run_at": "2026-08-06T09:30:00Z"}
+
+
+def test_run_now_requires_confirm() -> None:
+    """A manual run delivers real email, so it is gated like delete."""
+    result, client = _run(["schedules", "run", "sch_1"], {"data": {"id": "sch_1"}})
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "CONFIRM_REQUIRED"
+    # The GET is allowed (it names recipients); the run POST must not happen.
+    assert all(call[0][0] != "POST" for call in client.request.call_args_list)
+
+
+def test_run_now_confirm_prompt_names_recipients() -> None:
+    """The refusal shows who would be emailed — the point of the gate."""
+    result, _ = _run(
+        ["schedules", "run", "sch_1"],
+        {
+            "data": {
+                "id": "sch_1",
+                "config": {
+                    "emailRecipients": [
+                        {"email": "cfo@acme.com"},
+                        {"email": "board@acme.com"},
+                    ]
+                },
+            }
+        },
+    )
+    assert result.exit_code == 1
+    message = json.loads(result.stdout)["error"]["message"]
+    assert "cfo@acme.com" in message
+    assert "board@acme.com" in message
+    assert "2 recipient(s)" in message
+
+
+def test_run_now_confirm_prompt_truncates_long_recipient_list() -> None:
+    result, _ = _run(
+        ["schedules", "run", "sch_1"],
+        {"data": {"config": {"emailRecipients": [{"email": f"u{i}@acme.com"} for i in range(8)]}}},
+    )
+    assert result.exit_code == 1
+    message = json.loads(result.stdout)["error"]["message"]
+    assert "8 recipient(s)" in message
+    assert "and 3 more" in message
+    assert "u7@acme.com" not in message
+
+
+def test_run_now_confirm_prompt_does_not_promise_zero_recipients() -> None:
+    """An empty/absent recipient list is not proof none exist; do not claim it is."""
+    result, _ = _run(["schedules", "run", "sch_1"], {"data": {"id": "sch_1"}})
+    message = json.loads(result.stdout)["error"]["message"]
+    assert "No recipients were listed" in message
+    assert "sends no email" not in message
+
+
+def test_run_now_with_confirm_skips_the_lookup() -> None:
+    """--confirm goes straight to the run; the GET exists only for the prompt."""
+    _, client = _run(["schedules", "run", "sch_1", "--confirm"], {"data": {"id": "run_1"}})
+    assert [call[0] for call in client.request.call_args_list] == [
+        ("POST", "/v1/schedules/sch_1/runs")
+    ]
 
 
 def test_recipient_type_is_lowercased() -> None:
@@ -749,6 +909,6 @@ def test_create_one_time_cadence_with_anchor() -> None:
 
 
 def test_run_now_defaults_to_empty_body() -> None:
-    result, client = _run(["schedules", "run", "sch_1"], {"data": {"id": "run_1"}})
+    result, client = _run(["schedules", "run", "sch_1", "--confirm"], {"data": {"id": "run_1"}})
     assert result.exit_code == 0, result.stdout
     assert client.request.call_args[1]["json"] == {}

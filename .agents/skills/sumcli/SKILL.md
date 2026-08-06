@@ -33,7 +33,7 @@ curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
    ```
 2. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 3. **Root options before subcommand**: `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `config delete-profile`, `catalog detach`.
+4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `schedules run`, `config delete-profile`, `catalog detach`. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
 5. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
 6. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
@@ -189,7 +189,7 @@ sumcli schedules list --project prj-... | jq '.result.schedules'
 sumcli schedules show schedule_...      # verify state before trusting it
 sumcli schedules pause schedule_...     # stop without deleting
 sumcli schedules resume schedule_...
-sumcli schedules run schedule_... --reason backfill   # off-cadence run
+sumcli schedules run schedule_... --reason backfill --confirm   # off-cadence run; sends email
 sumcli schedules runs schedule_... --count 5          # recent run history
 sumcli schedules delete schedule_... --confirm
 ```
@@ -200,17 +200,18 @@ Schedule ids are `schedule_<uuid>`, not `sch-...`. After `create`, confirm `stat
 
 **Best practices**
 
-1. **`update` replaces the cadence, but carries over config.** `PUT` overwrites the whole schedule, so resend every **cadence** flag you want to keep — an omitted `--time-of-day` or `--day` reverts to the server default. **Config is different**: `sumcli` reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you do not pass them. Pass a flag to override its field. This merge exists because `email_recipients`, `params`, and `output_config` have no server-side default — without it, changing the cadence would silently stop all email delivery. The target must stay the same; sum-api rejects a change of playbook on update.
+1. **`update` replaces the cadence, but carries over config.** `PUT` overwrites the whole schedule, so resend every **cadence** flag you want to keep — an omitted `--time-of-day` or `--day` reverts to the server default. **Config is different**: `sumcli` reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you do not pass them. Pass a flag to override its field. This merge exists because `email_recipients`, `params`, and `output_config` have no server-side default — without it, changing the cadence would silently stop all email delivery. `--playbook` is optional on `update` and defaults to the playbook already scheduled; sum-api rejects a change of target, so there is normally no reason to pass it. If the result carries `unmapped_config_keys`, this `sumcli` is older than the API and dropped those fields — upgrade and re-apply them.
 2. **Prefer `pause` over `delete`.** Pausing keeps the schedule and its run history. Deleting is irreversible and needs `--confirm`.
-3. **Create paused when the cadence is uncertain.** `--paused` registers the schedule without firing it. Verify with `schedules run` for a one-off, then `resume`.
-4. **`--paused` is tri-state.** `--paused` sends `true`, `--no-paused` sends `false`, and omitting the flag sends no key. On `update`, omitting it keeps the schedule's current pause state, because the config merge carries the existing value over.
-5. **`--email` is not validated — a wrong address fails silently.** The contract types it as a plain string with only a length check (3–320 chars), so an id, a typo, or a dead mailbox is accepted, stored, and never delivered. Nothing bounces back. **Never guess an address**: `auth whoami` and `tenant show` return `user_id`, not email, so ask the user. If you cannot get one, create the schedule with no recipients — the run still produces its output in the project — and add email later.
-6. **Do not schedule a playbook whose failure path is unproven.** A playbook that has only ever succeeded has never exercised its own error handling. Trigger it manually at least once, and prefer one that has failed at least once safely, before putting it on an unattended cadence.
-7. **Match the cadence to how often the data actually changes.** Daily on a source that updates weekly means 365 near-identical emails a year, and recipients stop reading them. Confirm the intended frequency when the request is ambiguous — "every Monday morning" and "every morning" are very different asks.
-8. **Always set `--zone` for business hours.** The default is UTC, so an unzoned `09:00` is early evening in Sydney and the small hours in Los Angeles. Pass an IANA ID (`America/New_York`), which tracks daylight saving; a fixed offset does not.
-9. **`--param` values are strings.** The contract types them as strings, so `--param threshold=0.8` arrives as `"0.8"`. The playbook must do its own casting.
-10. **Repeat `--email` per recipient**, as `address[:type[:name]]` — e.g. `--email ops@acme.com`, `--email cfo@acme.com:cc:Dana`. Type defaults to `to`; max 50 recipients.
-11. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong.
+3. **`schedules run` sends real email immediately and needs `--confirm`.** It is not a dry run. Without `--confirm` the command refuses and lists the recipients it would have mailed; show that list to the user before re-running. A valid but wrong schedule id is the easy mistake — it delivers to someone else's recipients, and nothing can recall it.
+4. **Create paused when the cadence is uncertain.** `--paused` registers the schedule without firing it. Verify with `schedules run --confirm` for a one-off, then `resume`.
+5. **`--paused` is tri-state.** `--paused` sends `true`, `--no-paused` sends `false`, and omitting the flag sends no key. On `update`, omitting it keeps the schedule's current pause state, because the config merge carries the existing value over.
+6. **`--email` is not validated — a wrong address fails silently.** The contract types it as a plain string with only a length check (3–320 chars), so an id, a typo, or a dead mailbox is accepted, stored, and never delivered. Nothing bounces back. **Never guess an address**: `auth whoami` and `tenant show` return `user_id`, not email, so ask the user. If you cannot get one, create the schedule with no recipients — the run still produces its output in the project — and add email later.
+7. **Do not schedule a playbook whose failure path is unproven.** A playbook that has only ever succeeded has never exercised its own error handling. Trigger it manually at least once, and prefer one that has failed at least once safely, before putting it on an unattended cadence.
+8. **Match the cadence to how often the data actually changes.** Daily on a source that updates weekly means 365 near-identical emails a year, and recipients stop reading them. Confirm the intended frequency when the request is ambiguous — "every Monday morning" and "every morning" are very different asks.
+9. **Always set `--zone` for business hours.** The default is UTC, so an unzoned `09:00` is early evening in Sydney and the small hours in Los Angeles. Pass an IANA ID (`America/New_York`), which tracks daylight saving; a fixed offset does not.
+10. **`--param` values are strings.** The contract types them as strings, so `--param threshold=0.8` arrives as `"0.8"`. The playbook must do its own casting.
+11. **Repeat `--email` per recipient**, as `address[:type[:name]]` — e.g. `--email ops@acme.com`, `--email cfo@acme.com:cc:Dana`. Type defaults to `to`; max 50 recipients.
+12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong.
 
 ### Chat feedback
 

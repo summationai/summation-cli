@@ -600,8 +600,11 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         # existing config so an omitted --email does not drop the recipient list.
         "update": (
             "Replace a schedule's cadence, keeping unspecified config "
-            "and the same --playbook target."
+            "and the existing --playbook target."
         ),
+        # The spec summary ("Run schedule now") does not convey that this delivers
+        # email immediately, which is why the command is confirm-gated.
+        "run": "Run a schedule now, delivering its output and email (--confirm).",
         "delete": "Delete a schedule (--confirm).",
     },
     "tables": {

@@ -176,7 +176,7 @@ sumcli schedules create --project prj-... --playbook file-... \
 
 sumcli schedules list --project prj-...
 sumcli schedules pause schedule_...      # stop without deleting
-sumcli schedules run schedule_...        # trigger one off-cadence run
+sumcli schedules run schedule_... --confirm   # trigger one off-cadence run (sends email)
 sumcli schedules runs schedule_...       # run history
 sumcli schedules delete schedule_... --confirm
 ```
@@ -210,7 +210,7 @@ Project-scoped commands accept `--project` when no default project is configured
 
 ## Behavior
 
-- Destructive commands require `**--confirm**`: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file.
+- Destructive commands require `**--confirm**`: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` is gated because a manual run delivers real email immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

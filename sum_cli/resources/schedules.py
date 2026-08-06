@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
@@ -51,7 +51,10 @@ _RECIPIENT_TYPES = ("to", "cc", "bcc")
 _MAX_RECIPIENTS = 50
 
 
-def _invalid(message: str, fix: str) -> None:
+def _invalid(message: str, fix: str) -> NoReturn:
+    # NoReturn, not None: emit_error exits, so every call site ends the command.
+    # Annotating it lets a type checker flag a real fall-through instead of
+    # leaving the next reader to go check output.py.
     emit_error(err("INVALID_REQUEST", message, fix))
 
 
@@ -181,6 +184,10 @@ _CONFIG_RESPONSE_TO_REQUEST = {
     "paused": "paused",
 }
 
+# Read-only response keys that are correctly absent from a PUT body. Anything outside
+# both this set and _CONFIG_RESPONSE_TO_REQUEST is unrecognized and gets reported.
+_CONFIG_RESPONSE_READ_ONLY = frozenset({"targetAvailable"})
+
 
 def _existing_config(schedule: object) -> dict:
     """Writable config fields from a GET response, renamed for a PUT body.
@@ -202,6 +209,75 @@ def _existing_config(schedule: object) -> dict:
         for response_key, request_key in _CONFIG_RESPONSE_TO_REQUEST.items()
         if current.get(response_key) not in (None, {}, [])
     }
+
+
+def _recipient_addresses(schedule: object) -> list[str]:
+    """Email addresses a manual run would deliver to, for the confirm prompt."""
+    if not isinstance(schedule, dict):
+        return []
+    config = schedule.get("config")
+    if not isinstance(config, dict):
+        return []
+    recipients = config.get("emailRecipients")
+    if not isinstance(recipients, list):
+        return []
+    return [
+        entry["email"]
+        for entry in recipients
+        if isinstance(entry, dict) and isinstance(entry.get("email"), str) and entry["email"]
+    ]
+
+
+def _refuse_unconfirmed_run(schedule_id: str, schedule: object) -> NoReturn:
+    """Refuse an unconfirmed manual run, naming the recipients it would email."""
+    addresses = _recipient_addresses(schedule)
+    if addresses:
+        shown = ", ".join(addresses[:5])
+        if len(addresses) > 5:
+            shown += f", and {len(addresses) - 5} more"
+        detail = f" It emails {len(addresses)} recipient(s): {shown}."
+    else:
+        # No recipients in the response is not proof none exist — the config may be
+        # withheld or the mapping stale — so do not promise the run sends nothing.
+        detail = " No recipients were listed on the schedule; check `schedules show`."
+    emit_error(
+        err(
+            "CONFIRM_REQUIRED",
+            f"Running schedule {schedule_id} now sends real output immediately.{detail}",
+            "Re-run with --confirm to send now.",
+        )
+    )
+
+
+def _existing_playbook_id(schedule: object) -> str | None:
+    """Playbook id from a GET response target, for defaulting ``update --playbook``."""
+    if not isinstance(schedule, dict):
+        return None
+    target = schedule.get("target")
+    if not isinstance(target, dict):
+        return None
+    # Response is camelCase; accept snake_case too so a contract change does not
+    # silently turn the default off.
+    value = target.get("playbookId") or target.get("playbook_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _unmapped_config_keys(schedule: object) -> list[str]:
+    """Response config keys this CLI does not know how to carry into a PUT.
+
+    The schedule config response type is ``"schema": {}``, so the camelCase mapping
+    above was derived from an observed payload, not the contract. If sum-api adds a
+    writable config field, ``_existing_config`` drops it and the full-replace PUT
+    silently discards it — the same data loss the merge exists to prevent, but
+    invisible. Surfacing the key names turns that into something the caller can see.
+    """
+    if not isinstance(schedule, dict):
+        return []
+    current = schedule.get("config")
+    if not isinstance(current, dict):
+        return []
+    known = set(_CONFIG_RESPONSE_TO_REQUEST) | _CONFIG_RESPONSE_READ_ONLY
+    return sorted(key for key in current if key not in known)
 
 
 def _build_config(
@@ -238,6 +314,14 @@ TypeOption = Annotated[
 ]
 PlaybookOption = Annotated[
     str, typer.Option("--playbook", help="Project playbook file id to schedule.")
+]
+UpdatePlaybookOption = Annotated[
+    str | None,
+    typer.Option(
+        "--playbook",
+        help="Project playbook file id. Defaults to the one already scheduled; sum-api "
+        "rejects a change of target, so there is normally no reason to pass it.",
+    ),
 ]
 DescriptionOption = Annotated[
     str | None, typer.Option("--description", help="Human-readable schedule description.")
@@ -417,8 +501,8 @@ def create_schedule(
 def update_schedule(
     ctx: typer.Context,
     schedule_id: Annotated[str, typer.Argument(help="Schedule id.")],
-    playbook: PlaybookOption,
     type: TypeOption,
+    playbook: UpdatePlaybookOption = None,
     project: Annotated[str | None, typer.Option("--project")] = None,
     description: DescriptionOption = None,
     time_of_day: TimeOfDayOption = None,
@@ -439,11 +523,12 @@ def update_schedule(
     paused: PausedOption = None,
     profile: ProfileOption = None,
 ) -> None:
-    """PUT replaces the schedule, so every field must be supplied again.
+    """PUT replaces the schedule, so every cadence field must be supplied again.
 
-    Config is the exception: this command reads the current schedule first and
-    carries over any config field you do not pass, so changing the cadence does
-    not silently drop the recipient list. Pass a flag to override its field.
+    Two exceptions, both read from the current schedule this command fetches first:
+    config fields you do not pass are carried over, so changing the cadence does not
+    silently drop the recipient list, and ``--playbook`` defaults to the playbook
+    already scheduled. Pass a flag to override its field.
 
     The target must match the currently scheduled playbook; sum-api rejects a
     change of target on update.
@@ -452,7 +537,6 @@ def update_schedule(
     pid = require_project(ctx, project)
     payload: dict = {
         "kind": _KIND,
-        "target": {"project_id": pid, "playbook_id": playbook},
         "schedule": _build_schedule_expression(
             type=type,
             time_of_day=time_of_day,
@@ -479,14 +563,31 @@ def update_schedule(
     )
     with api_client(ctx, profile) as c:
         existing = c.request("GET", f"/v1/schedules/{schedule_id}")
-        config = {
-            **_existing_config(unwrap_data(existing or {}, "data") or existing),
-            **overrides,
-        }
+        current = unwrap_data(existing or {}, "data") or existing
+        # sum-api rejects a target change, so the stored playbook is the only valid
+        # value. Default it rather than making the user run `show` to copy it back.
+        target_playbook = playbook or _existing_playbook_id(current)
+        if not target_playbook:
+            _invalid(
+                f"Schedule {schedule_id} has no playbook id to reuse.",
+                "Pass --playbook with the id from `sumcli schedules show`.",
+            )
+        payload["target"] = {"project_id": pid, "playbook_id": target_playbook}
+        config = {**_existing_config(current), **overrides}
         if config:
             payload["config"] = config
         body = c.request("PUT", f"/v1/schedules/{schedule_id}", json=payload)
-    emit(ok({"schedule": unwrap_data(body or {}, "data") or body, "project_id": pid}))
+    result: dict = {"schedule": unwrap_data(body or {}, "data") or body, "project_id": pid}
+    # A config key this CLI cannot map is dropped by the full-replace PUT. Name it
+    # rather than losing it quietly.
+    unmapped = _unmapped_config_keys(current)
+    if unmapped:
+        result["unmapped_config_keys"] = unmapped
+        result["warning"] = (
+            f"Dropped unrecognized config on update: {', '.join(unmapped)}. "
+            "This sumcli is older than the API; upgrade and re-apply those fields."
+        )
+    emit(ok(result))
 
 
 @app.command("delete")
@@ -558,13 +659,24 @@ def run_schedule_now(
         str | None,
         typer.Option("--effective-run-at", help="ISO-8601 effective run time for the run record."),
     ] = None,
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
     profile: ProfileOption = None,
 ) -> None:
+    """Run the schedule now. Requires --confirm: this delivers real email immediately.
+
+    A manual run is not recoverable once the mail is sent, so it is gated the same
+    way `delete` is. The confirm prompt names the recipients first, since a typo'd
+    but valid schedule id is the easy mistake here.
+    """
     payload: dict = {}
     if reason is not None:
         payload["reason"] = reason
     if effective_run_at is not None:
         payload["effective_run_at"] = effective_run_at
     with api_client(ctx, profile) as c:
+        if not confirm:
+            # Fetch before refusing so the message can name who would be emailed.
+            existing = c.request("GET", f"/v1/schedules/{schedule_id}")
+            _refuse_unconfirmed_run(schedule_id, unwrap_data(existing or {}, "data") or existing)
         body = c.request("POST", f"/v1/schedules/{schedule_id}/runs", json=payload)
     emit(ok({"run": unwrap_data(body or {}, "data") or body, "schedule_id": schedule_id}))
