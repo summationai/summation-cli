@@ -86,13 +86,6 @@ class CallSite:
 UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/v1/auth/logout"): "No sumcli logout; sessions are profile-scoped.",
     ("GET", "/v1/chat-models"): "Chat model listing not exposed in sumcli.",
-    ("GET", "/v1/connections/app"): "App connectors not exposed in sumcli.",
-    ("GET", "/v1/connections/app/catalog"): "App connector catalog not exposed in sumcli.",
-    ("GET", "/v1/connections/app/catalog/*/tools"): "App connector tools not exposed in sumcli.",
-    ("GET", "/v1/connections/app/*"): "App connectors not exposed in sumcli.",
-    ("PATCH", "/v1/connections/app/*"): "App connectors not exposed in sumcli.",
-    ("DELETE", "/v1/connections/app/*"): "App connectors not exposed in sumcli.",
-    ("POST", "/v1/connections/app/*/disconnect"): "App connector disconnect not exposed in sumcli.",
     ("POST", "/v1/grid/tables"): "Grid calculation-table creation not exposed in sumcli.",
     ("POST", "/v1/grid/tables/*/materialize"): "Grid materialize not exposed in sumcli.",
     ("POST", "/v1/projects/*/files/uploads"): "Project file uploads not exposed in sumcli.",
@@ -598,6 +591,17 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "set-profile": "Create or replace a profile.",
         "copy-profile": "Clone a profile under a new name.",
         "delete-profile": "Remove a profile (--confirm).",
+    },
+    "connections": {
+        # PATCH /v1/connections/app/{id} writes one field (enabled_for_chat), so the
+        # spec summary ("Update app connection") is broader than either command.
+        # Split into two verbs so the effect is unambiguous in --help.
+        "app-enable-chat": "Let the agent use this app connection's tools during chat.",
+        "app-disable-chat": "Stop the agent from using this app connection's tools during chat.",
+        "app-delete": "Delete an app connection (--confirm).",
+        # "Disconnect" and "delete" differ subtly: disconnect revokes the agent's
+        # access but keeps the record, so say which one this is.
+        "app-disconnect": "Revoke the agent's access to an app connection, keeping the record.",
     },
     "reports": {
         "verify": "Verify a report or document by file id (--wait/--no-wait, --follow).",
