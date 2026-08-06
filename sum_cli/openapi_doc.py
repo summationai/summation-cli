@@ -99,15 +99,6 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/v1/projects/*/reports"): "Report listing is via files, not a dedicated command.",
     ("DELETE", "/v1/projects/*/reports/*"): "Report delete is via files delete.",
     ("GET", "/v1/projects/*/reports/*/content"): "Report content export not exposed in sumcli.",
-    ("GET", "/v1/schedules"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules"): "Schedules not exposed in sumcli.",
-    ("DELETE", "/v1/schedules/*"): "Schedules not exposed in sumcli.",
-    ("GET", "/v1/schedules/*"): "Schedules not exposed in sumcli.",
-    ("PUT", "/v1/schedules/*"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules/*/pause"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules/*/resume"): "Schedules not exposed in sumcli.",
-    ("GET", "/v1/schedules/*/runs"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules/*/runs"): "Schedules not exposed in sumcli.",
     ("POST", "/v1/tables/*/rows"): "Row append not exposed in sumcli.",
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
@@ -556,6 +547,7 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "chats": "Chats (Addison conversations).",
     "reports": "Generate and verify reports (.sdoc). List/download/delete via files.",
     "playbooks": "Playbook discovery.",
+    "schedules": "Recurring playbook schedules and their runs.",
     "files": "Project-scoped files.",
     "filesystem": "External storage providers (SharePoint).",
     "catalog": "Project catalog entries (tables/views attached to project).",
@@ -602,6 +594,19 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
     "reports": {
         "verify": "Verify a report or document by file id (--wait/--no-wait, --follow).",
     },
+    "schedules": {
+        # PUT replaces the schedule and the target cannot change, so the bare spec
+        # summary ("Update schedule") reads as a partial update. The CLI merges
+        # existing config so an omitted --email does not drop the recipient list.
+        "update": (
+            "Replace a schedule's cadence, keeping unspecified config "
+            "and the existing --playbook target."
+        ),
+        # The spec summary ("Run schedule now") does not convey that this delivers
+        # email immediately, which is why the command is confirm-gated.
+        "run": "Run a schedule now, delivering its output and email (--confirm).",
+        "delete": "Delete a schedule (--confirm).",
+    },
     "tables": {
         "import": "Import from local file (multi-step; --wait/--no-wait).",
     },
@@ -614,8 +619,7 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "delete": "Delete a file or folder by item id (--confirm).",
         "set-defaults": "Persist --root/--path defaults in config (--provider required).",
         "import-env": (
-            "Import SHAREPOINT_* from a skill-style env file into "
-            "~/.summation/summation-config."
+            "Import SHAREPOINT_* from a skill-style env file into ~/.summation/summation-config."
         ),
     },
 }

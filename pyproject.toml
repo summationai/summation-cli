@@ -29,7 +29,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://summation.com"
-Documentation = "https://summation-676748f5-docs-api-and-integrations.mintlify.app/integrations/cli"
+Documentation = "https://docs.summation.com/integrations/cli"
 Repository = "https://github.com/summationai/summation-cli"
 Issues = "https://github.com/summationai/summation-cli/issues"
 
