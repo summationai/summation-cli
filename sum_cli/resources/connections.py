@@ -114,6 +114,15 @@ def update_connection(
     connection_id: Annotated[str, typer.Argument()],
     name: Annotated[str | None, typer.Option("--name")] = None,
     description: Annotated[str | None, typer.Option("--description")] = None,
+    config_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--config-file",
+            help="JSON object with any of: config, secrets, snapshot_config. Use to rotate "
+            "secrets or change settings. Only the keys present in the file are sent; "
+            "omitted keys are left unchanged. Unknown top-level keys are rejected.",
+        ),
+    ] = None,
     profile: ProfileOption = None,
 ) -> None:
     payload: dict = {}
@@ -121,6 +130,35 @@ def update_connection(
         payload["name"] = name
     if description:
         payload["description"] = description
+    if config_file:
+        extra = load_json_object(
+            config_file,
+            "--config-file",
+            shape_hint='{"secrets": {"password": "..."}}',
+        )
+        unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
+        if unknown:
+            invalid_request(
+                f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
+                f"Use only {', '.join(_CONFIG_FILE_KEYS)}; set name and description "
+                "with their flags.",
+            )
+        # PATCH leaves omitted fields unchanged, so forward only the keys the file
+        # actually has -- never create's `.get(key, {})` default. For snapshot_config
+        # that is load-bearing: the spec says a present value replaces the stored
+        # policy, and the server does accept an empty object, so defaulting it would
+        # erase the policy on a secrets-only rotation. (Empty config/secrets happen to
+        # be no-ops server-side today, but the contract does not promise that.)
+        for key in _CONFIG_FILE_KEYS:
+            if key in extra:
+                payload[key] = extra[key]
+    if not payload:
+        # PATCH with {} succeeds server-side and changes nothing. Exiting 0 on a
+        # no-op reads as "updated", so reject rather than report a false success.
+        invalid_request(
+            "No changes given to `connections update`.",
+            "Pass --name, --description, or --config-file.",
+        )
     with api_client(ctx, profile) as c:
         body = c.request("PATCH", f"/v1/connections/data/{connection_id}", json=payload)
     emit(ok({"connection": unwrap_data(body or {}, "data") or body}))

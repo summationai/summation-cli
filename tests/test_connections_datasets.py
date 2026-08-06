@@ -286,6 +286,89 @@ def test_create_reports_every_unknown_config_file_key(tmp_path: Path) -> None:
     assert "zeta" in message
 
 
+# --- update (--config-file handling) ----------------------------------------
+
+
+def test_update_rotates_secrets_without_clearing_config(tmp_path: Path) -> None:
+    """PATCH leaves omitted fields unchanged, so a rotation must send secrets alone.
+    Verified against the live API: config survived. The load-bearing case is
+    snapshot_config (see below) -- a present value replaces the stored policy."""
+    config_file = tmp_path / "rotate.json"
+    config_file.write_text(json.dumps({"secrets": {"snowflake_password": "new-pw"}}))
+    _, client = _run(
+        ["connections", "update", "conn_1", "--config-file", str(config_file)],
+        {"data": {"id": "conn_1"}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent == {"secrets": {"snowflake_password": "new-pw"}}
+    assert "config" not in sent
+    assert "snapshot_config" not in sent
+
+
+def test_update_sends_snapshot_config_alone(tmp_path: Path) -> None:
+    """Editing only the snapshot policy must not touch config or secrets."""
+    config_file = tmp_path / "snap.json"
+    config_file.write_text(json.dumps({"snapshot_config": {"enabled": True, "version": 1}}))
+    _, client = _run(
+        ["connections", "update", "conn_1", "--config-file", str(config_file)],
+        {"data": {}},
+    )
+    assert client.request.call_args[1]["json"] == {
+        "snapshot_config": {"enabled": True, "version": 1}
+    }
+
+
+def test_update_never_defaults_snapshot_config(tmp_path: Path) -> None:
+    """The load-bearing case. A present snapshot_config replaces the stored policy,
+    and the server accepts an empty object, so a `.get("snapshot_config", {})` default
+    would erase the policy on a rotation that never mentioned snapshotting."""
+    config_file = tmp_path / "rotate.json"
+    config_file.write_text(json.dumps({"secrets": {"password": "new"}}))
+    _, client = _run(
+        ["connections", "update", "conn_1", "--config-file", str(config_file)],
+        {"data": {}},
+    )
+    assert "snapshot_config" not in client.request.call_args[1]["json"]
+
+
+def test_update_combines_flags_and_file(tmp_path: Path) -> None:
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps({"config": {"host": "h2"}}))
+    _, client = _run(
+        [
+            "connections",
+            "update",
+            "conn_1",
+            "--name",
+            "renamed",
+            "--config-file",
+            str(config_file),
+        ],
+        {"data": {}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent == {"name": "renamed", "config": {"host": "h2"}}
+
+
+def test_update_rejects_unknown_config_file_keys(tmp_path: Path) -> None:
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps({"snapshotConfig": {"enabled": True}}))
+    result, client = _run(["connections", "update", "conn_1", "--config-file", str(config_file)])
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "snapshotConfig" in body["error"]["message"]
+    client.request.assert_not_called()
+
+
+def test_update_rejects_empty_change_set() -> None:
+    """PATCH {} succeeds and changes nothing; exit 0 would read as "updated"."""
+    result, client = _run(["connections", "update", "conn_1"])
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
 def test_attach_datasets_hint_names_datasets_shape(tmp_path: Path) -> None:
     """The shared loader must report the caller's shape, not a fixed one."""
     spec_file = tmp_path / "datasets.json"
