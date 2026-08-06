@@ -46,6 +46,9 @@ _DAYS_OF_WEEK = (
     "SUNDAY",
 )
 _RECIPIENT_TYPES = ("to", "cc", "bcc")
+# PlaybookScheduleConfigRequest.email_recipients maxItems; checked client-side so an
+# over-long list fails before the request (matches chats._DETAILS_MAX_LEN).
+_MAX_RECIPIENTS = 50
 
 
 def _invalid(message: str, fix: str) -> None:
@@ -89,7 +92,11 @@ def _parse_param(raw: str) -> tuple[str, str]:
 def _load_json_object(path: Path, flag: str) -> dict:
     try:
         parsed = json.loads(path.read_text())
-    except json.JSONDecodeError as exc:
+    except UnicodeDecodeError as exc:
+        # Not JSONDecodeError: read_text() fails before parsing on non-UTF-8 bytes.
+        _invalid(f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON.")
+    except ValueError as exc:
+        # Subsumes json.JSONDecodeError.
         _invalid(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON object in {flag}.")
     except OSError as exc:
         _invalid(
@@ -159,7 +166,7 @@ def _build_config(
     output_config_file: Path | None,
     emails: list[str] | None,
     max_concurrent_runs: int | None,
-    paused: bool,
+    paused: bool | None,
 ) -> dict:
     config: dict = {}
     if params:
@@ -169,11 +176,16 @@ def _build_config(
     if output_config_file is not None:
         config["output_config"] = _load_json_object(output_config_file, "--output-config-file")
     if emails:
+        if len(emails) > _MAX_RECIPIENTS:
+            _invalid(
+                f"--email was given {len(emails)} times; the limit is {_MAX_RECIPIENTS}.",
+                f"Send to {_MAX_RECIPIENTS} recipients or fewer.",
+            )
         config["email_recipients"] = [_parse_recipient(raw) for raw in emails]
     if max_concurrent_runs is not None:
         config["max_concurrent_runs"] = max_concurrent_runs
-    if paused:
-        config["paused"] = True
+    if paused is not None:
+        config["paused"] = paused
     return config
 
 
@@ -237,13 +249,23 @@ OutputConfigFileOption = Annotated[
 ]
 EmailOption = Annotated[
     list[str] | None,
-    typer.Option("--email", help="Recipient as address[:type[:name]]; repeatable (max 50)."),
+    typer.Option(
+        "--email",
+        help=f"Recipient as address[:type[:name]]; repeatable (max {_MAX_RECIPIENTS}).",
+    ),
 ]
 MaxConcurrentRunsOption = Annotated[
     int | None,
     typer.Option("--max-concurrent-runs", min=1, max=5, help="Max concurrent runs (default 1)."),
 ]
-PausedOption = Annotated[bool, typer.Option("--paused", help="Create/update in a paused state.")]
+PausedOption = Annotated[
+    bool | None,
+    typer.Option(
+        "--paused/--no-paused",
+        help="Pause or unpause the schedule. Omit to leave the server default (create) "
+        "or the current state unspecified (update).",
+    ),
+]
 
 
 @app.command("list")
@@ -312,7 +334,7 @@ def create_schedule(
     output_config_file: OutputConfigFileOption = None,
     email: EmailOption = None,
     max_concurrent_runs: MaxConcurrentRunsOption = None,
-    paused: PausedOption = False,
+    paused: PausedOption = None,
     profile: ProfileOption = None,
 ) -> None:
     pid = require_project(ctx, project)
@@ -373,7 +395,7 @@ def update_schedule(
     output_config_file: OutputConfigFileOption = None,
     email: EmailOption = None,
     max_concurrent_runs: MaxConcurrentRunsOption = None,
-    paused: PausedOption = False,
+    paused: PausedOption = None,
     profile: ProfileOption = None,
 ) -> None:
     """PUT replaces the schedule, so every field must be supplied again.

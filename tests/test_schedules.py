@@ -179,6 +179,25 @@ def test_create_email_defaults_to_to_type() -> None:
     assert recipients == [{"email": "ops@acme.com"}]
 
 
+def test_create_rejects_more_than_50_recipients() -> None:
+    args = ["schedules", "create", "--project", "proj_1", "--playbook", "pb_1", "--type", "daily"]
+    for i in range(51):
+        args += ["--email", f"user{i}@acme.com"]
+    result, client = _run(args)
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_accepts_exactly_50_recipients() -> None:
+    args = ["schedules", "create", "--project", "proj_1", "--playbook", "pb_1", "--type", "daily"]
+    for i in range(50):
+        args += ["--email", f"user{i}@acme.com"]
+    result, client = _run(args, {"data": {"id": "sch_1"}})
+    assert result.exit_code == 0, result.stdout
+    assert len(client.request.call_args[1]["json"]["config"]["email_recipients"]) == 50
+
+
 def test_create_reads_output_config_file(tmp_path: Path) -> None:
     cfg = tmp_path / "output.json"
     cfg.write_text(json.dumps({"subject": "Weekly board pack"}))
@@ -224,6 +243,50 @@ def test_create_rejects_invalid_output_config_file(tmp_path: Path) -> None:
     client.request.assert_not_called()
 
 
+def test_create_rejects_non_utf8_output_config_file(tmp_path: Path) -> None:
+    cfg = tmp_path / "output.json"
+    cfg.write_bytes(b"\xff\xfe\x00\x01")
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--output-config-file",
+            str(cfg),
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_rejects_non_object_output_config_file(tmp_path: Path) -> None:
+    cfg = tmp_path / "output.json"
+    cfg.write_text(json.dumps([1, 2]))
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--output-config-file",
+            str(cfg),
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
 def test_create_paused_sets_config_flag() -> None:
     result, client = _run(
         [
@@ -241,6 +304,46 @@ def test_create_paused_sets_config_flag() -> None:
     )
     assert result.exit_code == 0, result.stdout
     assert client.request.call_args[1]["json"]["config"] == {"paused": True}
+
+
+def test_update_no_paused_sends_explicit_false() -> None:
+    """--no-paused must send paused=false so a PUT can unpause; omitting it sends nothing."""
+    result, client = _run(
+        [
+            "schedules",
+            "update",
+            "sch_1",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--no-paused",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["config"] == {"paused": False}
+
+
+def test_update_omitted_paused_sends_no_key() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "update",
+            "sch_1",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "config" not in client.request.call_args[1]["json"]
 
 
 def test_update_uses_put_with_full_payload() -> None:
@@ -311,6 +414,116 @@ def test_run_now_sends_reason() -> None:
     assert client.request.call_args[0] == ("POST", "/v1/schedules/sch_1/runs")
     assert client.request.call_args[1]["json"] == {"reason": "backfill"}
     assert json.loads(result.stdout)["result"]["run"]["id"] == "run_1"
+
+
+def test_run_now_sends_effective_run_at() -> None:
+    result, client = _run(
+        ["schedules", "run", "sch_1", "--effective-run-at", "2026-08-06T09:30:00Z"],
+        {"data": {"id": "run_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"] == {"effective_run_at": "2026-08-06T09:30:00Z"}
+
+
+def test_recipient_type_is_lowercased() -> None:
+    """Uppercase --email types must normalize; the spec enum is lowercase only."""
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--email",
+            "ops@acme.com:CC",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    recipients = client.request.call_args[1]["json"]["config"]["email_recipients"]
+    assert recipients == [{"email": "ops@acme.com", "type": "cc"}]
+
+
+def test_create_cron_cadence() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "cron",
+            "--cron",
+            "0 9 * * 1",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["schedule"] == {
+        "type": "cron",
+        "cron_expression": "0 9 * * 1",
+    }
+
+
+def test_create_interval_cadence() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "interval",
+            "--every-minutes",
+            "30",
+            "--interval",
+            "2",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["schedule"] == {
+        "type": "interval",
+        "every_minutes": 30,
+        "interval": 2,
+    }
+
+
+def test_create_one_time_cadence_with_anchor() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "one_time",
+            "--run-date",
+            "2026-09-01",
+            "--anchor-date",
+            "2026-08-01",
+            "--max-concurrent-runs",
+            "3",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = client.request.call_args[1]["json"]
+    assert payload["schedule"] == {
+        "type": "one_time",
+        "run_date": "2026-09-01",
+        "anchor_date": "2026-08-01",
+    }
+    assert payload["config"]["max_concurrent_runs"] == 3
 
 
 def test_run_now_defaults_to_empty_body() -> None:
