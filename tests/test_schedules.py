@@ -158,6 +158,93 @@ def test_create_rejects_bad_day_and_param() -> None:
     param_client.request.assert_not_called()
 
 
+def test_create_rejects_email_without_address() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--email",
+            ":cc:Dana",
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_rejects_unknown_recipient_type() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--email",
+            "ops@acme.com:bogus",
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_rejects_unreadable_output_config_file(tmp_path: Path) -> None:
+    """A directory (not a file) exercises the OSError branch of _load_json_object."""
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "daily",
+            "--output-config-file",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_sends_description_and_month() -> None:
+    result, client = _run(
+        [
+            "schedules",
+            "create",
+            "--project",
+            "proj_1",
+            "--playbook",
+            "pb_1",
+            "--type",
+            "yearly",
+            "--month",
+            "3",
+            "--day-of-month",
+            "15",
+            "--description",
+            "Quarterly board pack",
+        ],
+        {"data": {"id": "sch_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = client.request.call_args[1]["json"]
+    assert payload["description"] == "Quarterly board pack"
+    assert payload["schedule"] == {"type": "yearly", "month": 3, "day_of_month": 15}
+
+
 def test_create_email_defaults_to_to_type() -> None:
     result, client = _run(
         [
@@ -328,6 +415,7 @@ def test_update_no_paused_sends_explicit_false() -> None:
 
 
 def test_update_omitted_paused_sends_no_key() -> None:
+    """With no existing config and no flags, `config` stays absent entirely."""
     result, client = _run(
         [
             "schedules",
@@ -344,6 +432,96 @@ def test_update_omitted_paused_sends_no_key() -> None:
     )
     assert result.exit_code == 0, result.stdout
     assert "config" not in client.request.call_args[1]["json"]
+
+
+def test_update_preserves_existing_config() -> None:
+    """PUT is a full replace, so unspecified config must be carried over.
+
+    email_recipients/params/output_config have no server default: without the
+    merge, changing only the cadence would silently stop all email delivery.
+    """
+    existing = {
+        "data": {
+            "id": "sch_1",
+            "config": {
+                "params": {"region": "emea"},
+                "outputFolder": "/Board",
+                "emailRecipients": [{"email": "cfo@acme.com", "name": "", "type": "to"}],
+                "maxConcurrentRuns": 3,
+                "paused": True,
+                "targetAvailable": True,
+            },
+        }
+    }
+    client, cm = _mock_client()
+    client.request.side_effect = [existing, {"data": {"id": "sch_1"}}]
+    with patch("sum_cli.resources.schedules.api_client", return_value=cm):
+        result = runner.invoke(
+            app,
+            [
+                "schedules",
+                "update",
+                "sch_1",
+                "--project",
+                "proj_1",
+                "--playbook",
+                "pb_1",
+                "--type",
+                "daily",
+                "--time-of-day",
+                "10:00",
+            ],
+        )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args_list[0][0] == ("GET", "/v1/schedules/sch_1")
+    config = client.request.call_args_list[1][1]["json"]["config"]
+    assert config["email_recipients"] == [{"email": "cfo@acme.com", "name": "", "type": "to"}]
+    assert config["params"] == {"region": "emea"}
+    assert config["output_folder"] == "/Board"
+    assert config["max_concurrent_runs"] == 3
+    assert config["paused"] is True
+    # Read-only response fields must not be echoed back into the PUT body.
+    assert "targetAvailable" not in config
+    assert "target_available" not in config
+
+
+def test_update_flags_override_existing_config() -> None:
+    existing = {
+        "data": {
+            "id": "sch_1",
+            "config": {
+                "outputFolder": "/Board",
+                "emailRecipients": [{"email": "old@acme.com", "name": "", "type": "to"}],
+                "paused": True,
+            },
+        }
+    }
+    client, cm = _mock_client()
+    client.request.side_effect = [existing, {"data": {"id": "sch_1"}}]
+    with patch("sum_cli.resources.schedules.api_client", return_value=cm):
+        result = runner.invoke(
+            app,
+            [
+                "schedules",
+                "update",
+                "sch_1",
+                "--project",
+                "proj_1",
+                "--playbook",
+                "pb_1",
+                "--type",
+                "daily",
+                "--email",
+                "new@acme.com",
+                "--no-paused",
+            ],
+        )
+    assert result.exit_code == 0, result.stdout
+    config = client.request.call_args_list[1][1]["json"]["config"]
+    assert config["email_recipients"] == [{"email": "new@acme.com"}]
+    assert config["paused"] is False
+    # Untouched field still carried over.
+    assert config["output_folder"] == "/Board"
 
 
 def test_update_uses_put_with_full_payload() -> None:

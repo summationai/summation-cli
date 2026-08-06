@@ -55,6 +55,16 @@ def _invalid(message: str, fix: str) -> None:
     emit_error(err("INVALID_REQUEST", message, fix))
 
 
+def _check_recipient_limit(emails: list[str] | None) -> None:
+    """Pure input validation, called before require_project so an over-long list
+    does not need a resolved project to report — matches the chats.py ordering."""
+    if emails and len(emails) > _MAX_RECIPIENTS:
+        _invalid(
+            f"--email was given {len(emails)} times; the limit is {_MAX_RECIPIENTS}.",
+            f"Send to {_MAX_RECIPIENTS} recipients or fewer.",
+        )
+
+
 def _parse_recipient(raw: str) -> dict:
     """Parse ``--email`` as ``address[:type[:name]]`` (type defaults to ``to``)."""
     parts = raw.split(":", 2)
@@ -159,6 +169,38 @@ def _build_schedule_expression(
     return expression
 
 
+# Response config is camelCase; request config is snake_case. Only these fields are
+# writable — the response also carries read-only keys (e.g. targetAvailable) that must
+# not be echoed back into a PUT.
+_CONFIG_RESPONSE_TO_REQUEST = {
+    "params": "params",
+    "outputFolder": "output_folder",
+    "outputConfig": "output_config",
+    "emailRecipients": "email_recipients",
+    "maxConcurrentRuns": "max_concurrent_runs",
+    "paused": "paused",
+}
+
+
+def _existing_config(schedule: object) -> dict:
+    """Writable config fields from a GET response, renamed for a PUT body.
+
+    ``PUT /v1/schedules/{id}`` fully replaces the schedule, and ``email_recipients``,
+    ``params``, and ``output_config`` have no server-side default. Without this merge,
+    updating only the cadence would silently drop the recipient list.
+    """
+    if not isinstance(schedule, dict):
+        return {}
+    current = schedule.get("config")
+    if not isinstance(current, dict):
+        return {}
+    return {
+        request_key: current[response_key]
+        for response_key, request_key in _CONFIG_RESPONSE_TO_REQUEST.items()
+        if current.get(response_key) not in (None, {}, [])
+    }
+
+
 def _build_config(
     *,
     params: list[str] | None,
@@ -176,11 +218,6 @@ def _build_config(
     if output_config_file is not None:
         config["output_config"] = _load_json_object(output_config_file, "--output-config-file")
     if emails:
-        if len(emails) > _MAX_RECIPIENTS:
-            _invalid(
-                f"--email was given {len(emails)} times; the limit is {_MAX_RECIPIENTS}.",
-                f"Send to {_MAX_RECIPIENTS} recipients or fewer.",
-            )
         config["email_recipients"] = [_parse_recipient(raw) for raw in emails]
     if max_concurrent_runs is not None:
         config["max_concurrent_runs"] = max_concurrent_runs
@@ -337,6 +374,7 @@ def create_schedule(
     paused: PausedOption = None,
     profile: ProfileOption = None,
 ) -> None:
+    _check_recipient_limit(email)
     pid = require_project(ctx, project)
     payload: dict = {
         "kind": _KIND,
@@ -400,9 +438,14 @@ def update_schedule(
 ) -> None:
     """PUT replaces the schedule, so every field must be supplied again.
 
+    Config is the exception: this command reads the current schedule first and
+    carries over any config field you do not pass, so changing the cadence does
+    not silently drop the recipient list. Pass a flag to override its field.
+
     The target must match the currently scheduled playbook; sum-api rejects a
     change of target on update.
     """
+    _check_recipient_limit(email)
     pid = require_project(ctx, project)
     payload: dict = {
         "kind": _KIND,
@@ -423,7 +466,7 @@ def update_schedule(
     }
     if description is not None:
         payload["description"] = description
-    config = _build_config(
+    overrides = _build_config(
         params=param,
         output_folder=output_folder,
         output_config_file=output_config_file,
@@ -431,9 +474,14 @@ def update_schedule(
         max_concurrent_runs=max_concurrent_runs,
         paused=paused,
     )
-    if config:
-        payload["config"] = config
     with api_client(ctx, profile) as c:
+        existing = c.request("GET", f"/v1/schedules/{schedule_id}")
+        config = {
+            **_existing_config(unwrap_data(existing or {}, "data") or existing),
+            **overrides,
+        }
+        if config:
+            payload["config"] = config
         body = c.request("PUT", f"/v1/schedules/{schedule_id}", json=payload)
     emit(ok({"schedule": unwrap_data(body or {}, "data") or body, "project_id": pid}))
 

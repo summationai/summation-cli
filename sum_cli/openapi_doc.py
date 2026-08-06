@@ -595,9 +595,13 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "verify": "Verify a report or document by file id (--wait/--no-wait, --follow).",
     },
     "schedules": {
-        # PUT replaces the schedule, and the target cannot change — the bare spec
-        # summary ("Update schedule") reads as a partial update, which it is not.
-        "update": "Replace a schedule; resend every field, and keep the same --playbook target.",
+        # PUT replaces the schedule and the target cannot change, so the bare spec
+        # summary ("Update schedule") reads as a partial update. The CLI merges
+        # existing config so an omitted --email does not drop the recipient list.
+        "update": (
+            "Replace a schedule's cadence, keeping unspecified config "
+            "and the same --playbook target."
+        ),
         "delete": "Delete a schedule (--confirm).",
     },
     "tables": {
