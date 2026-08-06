@@ -18,6 +18,7 @@ from sum_cli.commands import (
     unwrap_data,
 )
 from sum_cli.output import emit, emit_error, err, ok, truncate_list
+from sum_cli.output import invalid_request as _invalid
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -49,13 +50,6 @@ _RECIPIENT_TYPES = ("to", "cc", "bcc")
 # PlaybookScheduleConfigRequest.email_recipients maxItems; checked client-side so an
 # over-long list fails before the request (matches chats._DETAILS_MAX_LEN).
 _MAX_RECIPIENTS = 50
-
-
-def _invalid(message: str, fix: str) -> NoReturn:
-    # NoReturn, not None: emit_error exits, so every call site ends the command.
-    # Annotating it lets a type checker flag a real fall-through instead of
-    # leaving the next reader to go check output.py.
-    emit_error(err("INVALID_REQUEST", message, fix))
 
 
 def _check_recipient_limit(emails: list[str] | None) -> None:

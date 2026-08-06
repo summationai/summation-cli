@@ -196,6 +196,16 @@ def emit_error(envelope: dict[str, Any]) -> NoReturn:
     sys.exit(1)
 
 
+def invalid_request(message: str, fix: str) -> NoReturn:
+    """Report client-side input validation failure and exit.
+
+    NoReturn, not None: emit_error exits, so every call site ends the command.
+    Annotating it lets a type checker flag a real fall-through instead of leaving
+    the next reader to go check emit_error.
+    """
+    emit_error(err("INVALID_REQUEST", message, fix))
+
+
 def ndjson(type_: str, **kwargs: Any) -> None:
     if _output_mode == "human":
         line = render_human_stream(type_, kwargs)

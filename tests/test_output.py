@@ -10,6 +10,7 @@ import pytest
 from sum_cli.output import (
     action,
     err,
+    invalid_request,
     ok,
     param,
     render_human,
@@ -34,6 +35,31 @@ def test_err_envelope_shape():
     assert env["ok"] is False
     assert env["error"]["code"] == "CODE"
     assert env["fix"] == "fix me"
+
+
+def test_invalid_request_emits_envelope_and_exits(capsys):
+    """Shared helper: one implementation for every resource module's input rejects."""
+    set_output_mode("json")
+    with pytest.raises(SystemExit) as exc:
+        invalid_request("bad input", "do this instead")
+    assert exc.value.code == 1
+    body = json.loads(capsys.readouterr().out)
+    assert body["ok"] is False
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert body["error"]["message"] == "bad input"
+    assert body["fix"] == "do this instead"
+
+
+def test_resource_modules_do_not_redefine_invalid_request():
+    """Guard against a third copy: connections and schedules each had a byte-identical
+    private _invalid before it moved here."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "sum_cli"
+    offenders = [
+        str(p.relative_to(root)) for p in root.rglob("*.py") if "def _invalid(" in p.read_text()
+    ]
+    assert not offenders, f"Import invalid_request from sum_cli.output instead: {offenders}"
 
 
 def test_truncate_list():
