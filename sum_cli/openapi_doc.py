@@ -86,13 +86,6 @@ class CallSite:
 UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/v1/auth/logout"): "No sumcli logout; sessions are profile-scoped.",
     ("GET", "/v1/chat-models"): "Chat model listing not exposed in sumcli.",
-    ("GET", "/v1/connections/data/*/datasets"): "Connection datasets not exposed in sumcli.",
-    ("POST", "/v1/connections/data/*/datasets"): "Connection datasets not exposed in sumcli.",
-    (
-        "POST",
-        "/v1/connections/data/*/datasets/*/snapshots",
-    ): "Dataset snapshots not exposed in sumcli.",
-    ("GET", "/v1/connections/data/*/snapshots"): "Snapshot runs not exposed in sumcli.",
     ("GET", "/v1/connections/app"): "App connectors not exposed in sumcli.",
     ("GET", "/v1/connections/app/catalog"): "App connector catalog not exposed in sumcli.",
     ("GET", "/v1/connections/app/catalog/*/tools"): "App connector tools not exposed in sumcli.",
