@@ -33,7 +33,7 @@ curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
    ```
 2. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 3. **Root options before subcommand**: `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `schedules run`, `config delete-profile`, `catalog detach`. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
+4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `config delete-profile`, `catalog detach`. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
 5. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
 6. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
@@ -102,7 +102,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `schedules` | recurring playbook runs (CRUD, pause/resume, run now, run history) |
 | `files` | project file upload/download/list/delete |
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
-| `connections` | external data sources (CRUD, test, browse) |
+| `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
 | `grid` | status, sync, lineage, push |
 
 ## Common workflows
@@ -125,6 +125,133 @@ sumcli queries run --sql 'SELECT * FROM customers' --limit 5
 Two-step (keep CSV in project files): `files upload` then `tables import --remote --path /Customers.csv --table customers`.
 
 After import, **attach** before the table appears in `catalog list` / project queries. `tables delete` does not auto-detach — run `catalog detach` separately.
+
+### Data connections (add, verify, remove)
+
+A connection is not usable until **three** things are true: the record exists, its
+credentials pass a test, and datasets are attached. Creating alone gets you none of
+the last two.
+
+```bash
+# 1. CREATE — secrets go in a file, never on the command line
+cat > /tmp/conn.json <<'EOF'
+{
+  "config":  {"snowflake_account": "myorg-acct1", "snowflake_username": "svc_user",
+              "snowflake_warehouse": "WH"},
+  "secrets": {"snowflake_password": "..."}
+}
+EOF
+sumcli connections create --name prod-sf --type SNOWFLAKE --config-file /tmp/conn.json
+rm -f /tmp/conn.json          # always, success or failure
+
+# 2. TEST — the only step that proves the credentials work
+CONN=con-...
+sumcli connections test "$CONN"
+sumcli connections show "$CONN" | jq '.result.connection.lastTestStatus'   # want "PASS"
+
+# 3. ATTACH — browse the source, then attach what you want
+sumcli connections browse "$CONN" --path-prefix DB.SCHEMA
+sumcli connections attach-datasets "$CONN" --from-source DB.SCHEMA.ORDERS
+sumcli connections datasets "$CONN" | jq '.result.datasets[] | {name, status, proxyTableStatus}'
+```
+
+Snapshots — copy a dataset's current source data into Summation's lakehouse so
+downstream tables build on a stable copy:
+
+```bash
+sumcli connections snapshot "$CONN" ds-...        # returns 202 queued; takes no body
+sumcli connections snapshots "$CONN" --limit 5    # poll: newest first, 1-50
+```
+
+Snapshotting must be enabled for the dataset first — either
+`--snapshot-enabled` at attach time or the connection's snapshot policy. Otherwise
+the call returns a conflict explaining what to turn on. One snapshot per dataset runs
+at a time. Poll until a run's `status` is terminal, then read `snapshotTableName` for
+the table to build on; failures carry `errorCode` / `errorMessage`.
+
+Removing a connection:
+
+```bash
+sumcli connections show "$CONN"                 # confirm the target first
+sumcli connections datasets "$CONN"             # see what you are about to orphan
+sumcli connections delete "$CONN" --confirm     # irreversible
+sumcli connections list                         # verify it is gone
+```
+
+**Best practices**
+
+1. **`status: ACTIVE` does not mean the connection works.** A brand-new connection
+   reports `ACTIVE` with no `lastTestStatus` at all — `ACTIVE` only means the record
+   exists. A connection with entirely fake credentials still reports `ACTIVE` *after*
+   a failed test. **Gate on `lastTestStatus == "PASS"`, never on `status`.** This is
+   the single most common way to hand someone a connection that returns nothing.
+2. **Always `test` after `create`.** `lastTestStatus` and `lastTestedAt` are absent
+   until the first test runs. Nothing tests a connection for you.
+3. **A dataset needs two green lights.** It is queryable only when `status` is
+   `DEPLOYED` **and** `proxyTableStatus` is `CREATED`. Attachment returns immediately
+   and loads in the background, so poll `connections datasets` until both hold — one
+   alone is not enough.
+4. **Secrets go through `--config-file`, never a flag or heredoc in chat.** The file
+   keeps the credential out of argv, shell history, and the transcript. Delete it
+   immediately after, on success or failure. Responses return `secretRefs` (e.g.
+   `CON_PROD_SF_SNOWFLAKE_PASSWORD`), never the value.
+5. **Never create a connection without its secrets.** The API accepts a secretless
+   create, but the result cannot be finished in the web app — it strands an orphan
+   record the user cannot fix. If one is created by accident, delete it.
+6. **Snowflake wants the account identifier, not a URL.** Use `myorg-acct1`, not
+   `myorg-acct1.snowflakecomputing.com` and not `https://…`. Legacy identifiers
+   without a hyphen are rejected. Required: `snowflake_account`,
+   `snowflake_username`, plus either `snowflake_password` or
+   `snowflake_private_key` — auth type is inferred from which you supply.
+7. **Pass `--from-source` values exactly as `browse` returned them.** Never retype or
+   guess a source path. For request-shaped sources (HTTP APIs) omit `--from-source`
+   entirely and describe the request in `--datasets-file` `params`.
+8. **Use `--datasets-file` for anything beyond a plain table.** `--from-source` is
+   repeatable for the simple case; connector-specific `params` need the file. Limit
+   is 100 datasets per request, applied as one atomic batch.
+9. **Check what a delete orphans before running it.** Deleting is irreversible and
+   takes down every dataset attached to that connection. List the datasets first, and
+   confirm the id with `show` — ids are easy to transpose.
+10. **Do not leave test connections behind in a real tenant.** If you create one to
+    exercise a flow, delete it in the same session. An inert record with dead
+    credentials still shows up in the workspace UI as a broken connection.
+11. **Response keys are lowerCamel; single-word enum values are not.** Fields come
+    back as `lastTestStatus` / `proxyTableStatus`, while their values stay upper-case
+    (`PASS`, `DEPLOYED`, `CREATED`). Only **multi-word** enum values are rewritten —
+    a `SCHEDULE_STATE_ACTIVE` arrives as `scheduleStateActive`. Compare against what
+    the payload actually contains rather than assuming one convention throughout.
+
+### App connectors (`connections app-*`)
+
+A separate resource under the same group: third-party apps (NetSuite, SharePoint,
+Salesforce, Google Drive …) whose **tools the agent can call during chat** — not data
+sources you query. The bare verbs (`list`, `show`, `delete`) belong to data
+connections; every app command is prefixed `app-`.
+
+```bash
+sumcli connections app-catalog                      # what can be connected
+sumcli connections app-tools netsuite               # what that app exposes
+sumcli connections app-list                         # what IS connected
+sumcli connections app-list --enabled-for-chat-only
+sumcli connections app-enable-chat  app-conn-...    # let the agent use its tools
+sumcli connections app-disable-chat app-conn-...
+sumcli connections app-disconnect   app-conn-...    # revoke access, KEEP the record
+sumcli connections app-delete       app-conn-... --confirm   # remove entirely
+```
+
+**Best practices**
+
+1. **`disconnect` and `delete` are different.** Disconnect revokes the agent's access
+   and keeps the record; delete removes it. Prefer disconnect when the user may
+   reconnect later.
+2. **Connecting is not a CLI operation.** The OAuth handshake happens in the web app.
+   The CLI inspects, toggles chat access, disconnects, and deletes — it cannot create
+   an app connection.
+3. **Enabling for chat is what actually exposes the tools.** A connected app whose
+   `enabledForChat` is false is inert. If the agent cannot see an app's tools, check
+   this before assuming the connection is broken.
+4. **Catalog keys are not provider slugs.** SharePoint's key is `share_point`, not
+   `sharepoint`. Pass `app-tools` the `key` from `app-catalog` verbatim.
 
 ### Report / chat (long-running)
 

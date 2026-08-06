@@ -31,7 +31,12 @@ def _invalid(message: str, fix: str) -> None:
     emit_error(err("INVALID_REQUEST", message, fix))
 
 
-def _load_json_object(path: Path, flag: str) -> dict:
+def _load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
+    """Read a JSON object from ``path``, reporting every failure as INVALID_REQUEST.
+
+    ``shape_hint`` is an example of the expected object, shown when the file parses
+    but is not an object — each flag expects a different shape.
+    """
     try:
         parsed = json.loads(path.read_text())
     except UnicodeDecodeError as exc:
@@ -45,10 +50,7 @@ def _load_json_object(path: Path, flag: str) -> dict:
             f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
         )
     if not isinstance(parsed, dict):
-        _invalid(
-            f"{flag} must contain a JSON object.",
-            'Use an object, e.g. {"datasets": [{"from_source": "db.schema.table"}]}.',
-        )
+        _invalid(f"{flag} must contain a JSON object.", f"Use an object, e.g. {shape_hint}.")
     return parsed
 
 
@@ -98,26 +100,15 @@ def create_connection(
     if description:
         payload["description"] = description
     if config_file:
-        try:
-            extra = json.loads(config_file.read_text())
-        except json.JSONDecodeError as exc:
-            emit_error(
-                err(
-                    "INVALID_REQUEST",
-                    f"Invalid JSON in --config-file: {exc}",
-                    "Provide a valid JSON file with config and secrets.",
-                )
-            )
-        if not isinstance(extra, dict):
-            emit_error(
-                err(
-                    "INVALID_REQUEST",
-                    "--config-file must contain a JSON object.",
-                    'Use {"config": {...}, "secrets": {...}}.',
-                )
-            )
-        payload.setdefault("config", extra.get("config", {}))
-        payload.setdefault("secrets", extra.get("secrets", {}))
+        extra = _load_json_object(
+            config_file,
+            "--config-file",
+            shape_hint='{"config": {...}, "secrets": {...}}',
+        )
+        # Assign, never setdefault: the file is the caller's explicit input and must
+        # win over anything already on the payload.
+        payload["config"] = extra.get("config", {})
+        payload["secrets"] = extra.get("secrets", {})
     with api_client(ctx, profile) as c:
         body = c.request("POST", "/v1/connections/data", json=payload)
     emit(ok({"connection": unwrap_data(body or {}, "data") or body}))
@@ -261,7 +252,11 @@ def attach_datasets(
             "Put every dataset in --datasets-file, or drop it and repeat --from-source.",
         )
     if datasets_file:
-        parsed = _load_json_object(datasets_file, "--datasets-file")
+        parsed = _load_json_object(
+            datasets_file,
+            "--datasets-file",
+            shape_hint='{"datasets": [{"from_source": "db.schema.table"}]}',
+        )
         specs = parsed.get("datasets")
         if not isinstance(specs, list) or not specs:
             _invalid(
