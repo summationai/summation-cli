@@ -36,6 +36,170 @@ def _run(args: list[str], return_value: object = None) -> tuple[object, MagicMoc
     return result, client
 
 
+# --- create (--config-file handling) ----------------------------------------
+
+
+def test_create_sends_config_and_secrets_from_file(tmp_path: Path) -> None:
+    config_file = tmp_path / "sf.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "config": {"snowflake_account": "myorg-acct1", "snowflake_username": "svc"},
+                "secrets": {"snowflake_password": "pw"},
+            }
+        )
+    )
+    _, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "prod-sf",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(config_file),
+        ],
+        {"data": {"id": "conn_1"}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent["name"] == "prod-sf"
+    assert sent["type"] == "SNOWFLAKE"
+    assert sent["config"]["snowflake_account"] == "myorg-acct1"
+    assert sent["secrets"]["snowflake_password"] == "pw"
+
+
+def test_create_file_config_overwrites_rather_than_defaults(tmp_path: Path) -> None:
+    """Regression: the file is the caller's explicit input, so it must land on the
+    payload verbatim. ``setdefault`` would make this a silent no-op if anything
+    ever populated config/secrets first."""
+    config_file = tmp_path / "sf.json"
+    config_file.write_text(
+        json.dumps({"config": {"host": "from-file"}, "secrets": {"password": "from-file"}})
+    )
+    _, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "POSTGRES",
+            "--config-file",
+            str(config_file),
+        ],
+        {"data": {}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent["config"] == {"host": "from-file"}
+    assert sent["secrets"] == {"password": "from-file"}
+
+
+def test_create_omits_config_keys_without_file() -> None:
+    """No --config-file means no empty config/secrets on the request."""
+    _, client = _run(
+        ["connections", "create", "--name", "n", "--type", "POSTGRES"],
+        {"data": {}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert "config" not in sent
+    assert "secrets" not in sent
+
+
+def test_create_rejects_non_object_config_file(tmp_path: Path) -> None:
+    config_file = tmp_path / "sf.json"
+    config_file.write_text(json.dumps(["not", "an", "object"]))
+    result, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(config_file),
+        ]
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    # Hint must describe this flag's shape, not the datasets shape.
+    assert "secrets" in body["fix"]
+    client.request.assert_not_called()
+
+
+def test_create_rejects_invalid_json_config_file(tmp_path: Path) -> None:
+    config_file = tmp_path / "sf.json"
+    config_file.write_text("{not json")
+    result, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(config_file),
+        ]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_rejects_non_utf8_config_file(tmp_path: Path) -> None:
+    """Previously raised UnicodeDecodeError instead of a clean CLI error."""
+    config_file = tmp_path / "sf.json"
+    config_file.write_bytes(b"\xff\xfe{invalid}")
+    result, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(config_file),
+        ]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_create_rejects_unreadable_config_file(tmp_path: Path) -> None:
+    """Previously raised a bare OSError traceback."""
+    missing = tmp_path / "does-not-exist.json"
+    result, client = _run(
+        [
+            "connections",
+            "create",
+            "--name",
+            "n",
+            "--type",
+            "SNOWFLAKE",
+            "--config-file",
+            str(missing),
+        ]
+    )
+    assert result.exit_code != 0
+    client.request.assert_not_called()
+
+
+def test_attach_datasets_hint_names_datasets_shape(tmp_path: Path) -> None:
+    """The shared loader must report the caller's shape, not a fixed one."""
+    spec_file = tmp_path / "datasets.json"
+    spec_file.write_text(json.dumps(["not", "an", "object"]))
+    result, _ = _run(
+        ["connections", "attach-datasets", "conn_1", "--datasets-file", str(spec_file)]
+    )
+    assert result.exit_code != 0
+    assert "from_source" in json.loads(result.stdout)["fix"]
+
+
 # --- datasets ---------------------------------------------------------------
 
 
