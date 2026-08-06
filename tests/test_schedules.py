@@ -446,6 +446,7 @@ def test_update_preserves_existing_config() -> None:
             "config": {
                 "params": {"region": "emea"},
                 "outputFolder": "/Board",
+                "outputConfig": {"subject": "Weekly board pack"},
                 "emailRecipients": [{"email": "cfo@acme.com", "name": "", "type": "to"}],
                 "maxConcurrentRuns": 3,
                 "paused": True,
@@ -478,11 +479,54 @@ def test_update_preserves_existing_config() -> None:
     assert config["email_recipients"] == [{"email": "cfo@acme.com", "name": "", "type": "to"}]
     assert config["params"] == {"region": "emea"}
     assert config["output_folder"] == "/Board"
+    assert config["output_config"] == {"subject": "Weekly board pack"}
     assert config["max_concurrent_runs"] == 3
+    # paused=False must survive the merge filter too — see test_update_preserves_paused_false.
     assert config["paused"] is True
     # Read-only response fields must not be echoed back into the PUT body.
     assert "targetAvailable" not in config
     assert "target_available" not in config
+
+
+def test_update_rejects_more_than_50_recipients() -> None:
+    """The limit is checked on update too, not just create."""
+    args = ["schedules", "update", "sch_1", "--project", "proj_1", "--playbook", "pb_1"]
+    args += ["--type", "daily"]
+    for i in range(51):
+        args += ["--email", f"user{i}@acme.com"]
+    result, client = _run(args)
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_update_preserves_paused_false() -> None:
+    """paused=False must survive the merge filter.
+
+    _existing_config drops values in (None, {}, []). False is not equal to any of
+    them, so it is kept — do not "simplify" that check to a truthiness test, or an
+    unpaused schedule would silently revert to the server default on every update.
+    """
+    existing = {"data": {"id": "sch_1", "config": {"paused": False}}}
+    client, cm = _mock_client()
+    client.request.side_effect = [existing, {"data": {"id": "sch_1"}}]
+    with patch("sum_cli.resources.schedules.api_client", return_value=cm):
+        result = runner.invoke(
+            app,
+            [
+                "schedules",
+                "update",
+                "sch_1",
+                "--project",
+                "proj_1",
+                "--playbook",
+                "pb_1",
+                "--type",
+                "daily",
+            ],
+        )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args_list[1][1]["json"]["config"] == {"paused": False}
 
 
 def test_update_flags_override_existing_config() -> None:

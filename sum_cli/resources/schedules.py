@@ -194,6 +194,9 @@ def _existing_config(schedule: object) -> dict:
     current = schedule.get("config")
     if not isinstance(current, dict):
         return {}
+    # Membership uses ==, and False/0/"" equal none of these, so falsy-but-real values
+    # survive. Do not rewrite this as a truthiness check: dropping paused=False would
+    # let the server default silently re-pause an unpaused schedule.
     return {
         request_key: current[response_key]
         for response_key, request_key in _CONFIG_RESPONSE_TO_REQUEST.items()

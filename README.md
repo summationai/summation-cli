@@ -53,6 +53,7 @@ curl -fsSL https://install.summation.com/sumcli | sh
 | `chats` | Addison conversations; SSE → NDJSON with `--follow` on create/reply |
 | `reports` | Generate and verify reports (`.sdoc`); file ops via `files` |
 | `playbooks` | Playbook discovery |
+| `schedules` | Recurring playbook runs (CRUD, `pause`/`resume`, `run`, `runs`) |
 | `files` | Project-scoped files (`upload`, `download`, `list`, `delete`) |
 | `filesystem` | Connected filesystem roots such as SharePoint |
 | `catalog` | Project catalog entries (tables/views attached to a project) |
@@ -162,6 +163,26 @@ sumcli tables delete --confirm tbl-...                          # remove from gr
 ```
 
 > **Note:** `tables delete` removes the underlying grid table but does **not** auto-cascade the project catalog entry that referenced it. Detach the entry separately with `catalog detach <file_id> --confirm`.
+
+### Scheduled playbook runs
+
+Schedules target **playbooks only** — `kind` is `playbook` in the API. Playbook ids come back as `fileId` from `playbooks list`.
+
+```bash
+sumcli schedules create --project prj-... --playbook file-... \
+  --type daily --time-of-day 09:30 --zone America/Los_Angeles \
+  --email you@example.com
+
+sumcli schedules list --project prj-...
+sumcli schedules pause schedule_...      # stop without deleting
+sumcli schedules run schedule_...        # trigger one off-cadence run
+sumcli schedules runs schedule_...       # run history
+sumcli schedules delete schedule_... --confirm
+```
+
+`--type` accepts `cron`, `interval`, `one_time`, `daily`, `weekly`, `biweekly`, `monthly`, `month_end`, and `yearly`. Supply the fields each type needs: `--cron`, `--every-minutes`, `--run-date`, `--day`, `--day-of-month`, `--month`.
+
+> **Note:** `PUT /v1/schedules/{id}` replaces the whole schedule, so `schedules update` re-sends every **cadence** flag. **Config is preserved**: the command reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you omit them. This merge is deliberate — `email_recipients`, `params`, and `output_config` have no server-side default, so a cadence-only update would otherwise stop all email delivery.
 
 ### Long-running operations
 
@@ -352,7 +373,7 @@ Command-tree action blurbs for API-backed commands are derived from the snapshot
 # Typer group help= or command docstrings in resource modules.
 - OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`).
 - No imports from sum-api service code or gRPC clients.
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `config delete-profile`.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `config delete-profile`.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

@@ -46,6 +46,7 @@ uv tool upgrade summation-cli   # later upgrades
 | `chats`       | Addison conversations; SSE → NDJSON with `--follow` on create/reply                                                                                  |
 | `reports`     | Generate and verify reports (`.sdoc`); file ops via `files`                                                                                          |
 | `playbooks`   | Playbook discovery                                                                                                                                   |
+| `schedules`   | Recurring playbook runs (`list`, `show`, `create`, `update`, `delete`, `pause`, `resume`, `run`, `runs`)                                             |
 | `files`       | Project-scoped files (`upload`, `download`, `list`, `show`, `import`, `delete`)                                                                      |
 | `filesystem`  | Connected filesystem roots such as SharePoint (`roots`, `list`, `upload`, `download`, `mkdir`, `delete`, `import-env`, `set-defaults`)               |
 | `catalog`     | Project catalog entries (`list`, `show`, `attach`, `detach`, `refresh`)                                                                              |
@@ -164,6 +165,26 @@ sumcli tables delete --confirm tbl-...                          # remove from gr
 
 > **Note:** `tables delete` removes the underlying grid table but does **not** auto-cascade the project catalog entry that referenced it. Detach the entry separately with `catalog detach <file_id> --confirm`.
 
+### Scheduled playbook runs
+
+Schedules target **playbooks only**. Playbook ids come back as `fileId` from `playbooks list`.
+
+```bash
+sumcli schedules create --project prj-... --playbook file-... \
+  --type daily --time-of-day 09:30 --zone America/Los_Angeles \
+  --email you@example.com
+
+sumcli schedules list --project prj-...
+sumcli schedules pause schedule_...      # stop without deleting
+sumcli schedules run schedule_...        # trigger one off-cadence run
+sumcli schedules runs schedule_...       # run history
+sumcli schedules delete schedule_... --confirm
+```
+
+`--type` accepts `cron`, `interval`, `one_time`, `daily`, `weekly`, `biweekly`, `monthly`, `month_end`, and `yearly`. Supply the fields each type needs: `--cron`, `--every-minutes`, `--run-date`, `--day`, `--day-of-month`, `--month`.
+
+> **Note:** `schedules update` replaces the cadence, so re-send every cadence flag. Config is preserved — the command reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you omit them.
+
 ### Long-running operations
 
 `chats create`, `chats reply`, `reports generate`, `reports verify`, `grid push`, and `tables import` all support `--wait`/`--no-wait` (and `--follow` where applicable). See **Long-running commands** below.
@@ -189,7 +210,7 @@ Project-scoped commands accept `--project` when no default project is configured
 
 ## Behavior
 
-- Destructive commands require `**--confirm**`: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file.
+- Destructive commands require `**--confirm**`: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `schedules delete`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).
