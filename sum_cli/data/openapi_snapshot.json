@@ -156,6 +156,25 @@
             "description": "Optional alternate rendering of the message for display; the agent still receives message.",
             "title": "Display Content"
           },
+          "effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reasoning effort for this turn (low, medium, high, xhigh, max). Honored under the same tenant setting as model selection; otherwise the default effort applies.",
+            "title": "Effort"
+          },
           "file_ids": {
             "description": "Project file ids to attach to the message as context.",
             "items": {
@@ -177,6 +196,19 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Chat model id to use for this turn, from GET /v1/chat-models. Per-request model selection is honored where enabled for the tenant; otherwise the default model applies. The reply metadata reports the model that ran.",
+            "title": "Model"
           },
           "title": {
             "anyOf": [
@@ -211,6 +243,25 @@
             "description": "Optional alternate rendering of the message for display; the agent still receives message.",
             "title": "Display Content"
           },
+          "effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reasoning effort for this turn (low, medium, high, xhigh, max). Honored under the same tenant setting as model selection; otherwise the default effort applies.",
+            "title": "Effort"
+          },
           "file_ids": {
             "description": "Project file ids to attach to the message as context.",
             "items": {
@@ -232,6 +283,19 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Chat model id to use for this turn, from GET /v1/chat-models. Per-request model selection is honored where enabled for the tenant; otherwise the default model applies. The reply metadata reports the model that ran.",
+            "title": "Model"
           }
         },
         "required": [
@@ -269,6 +333,18 @@
             "title": "Max Results",
             "type": "integer"
           },
+          "page_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque continuation token returned by the previous resource browse response.",
+            "title": "Page Token"
+          },
           "path_prefix": {
             "anyOf": [
               {
@@ -280,6 +356,19 @@
             ],
             "description": "Drill into the source hierarchy: omit for top level, then pass e.g. a database, then DB.SCHEMA.",
             "title": "Path Prefix"
+          },
+          "search_query": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Search resource names within the selected path.",
+            "title": "Search Query"
           }
         },
         "title": "ConnectionResourcesRequest",
@@ -321,6 +410,59 @@
             "additionalProperties": true,
             "description": "Credentials (e.g. password). Stored server-side as secret refs; never returned by any response.",
             "title": "Secrets",
+            "type": "object"
+          },
+          "snapshot_config": {
+            "additionalProperties": true,
+            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters; initial_query_parameters; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}; optional source-to-destination field_mappings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
+            "examples": [
+              {
+                "enabled": true,
+                "http_replication": {
+                  "limits": {
+                    "max_concurrency": 2,
+                    "max_response_bytes_per_request": 100000000,
+                    "requests_per_day": 40000,
+                    "requests_per_minute": 60,
+                    "requests_per_second": 1,
+                    "response_bytes_per_hour": 4000000000
+                  },
+                  "resources": [
+                    {
+                      "cursor": {
+                        "bootstrap_mode": "DESTINATION_MAX",
+                        "field": "ModificationTimestamp",
+                        "format": "RFC3339",
+                        "literal_style": "ODATA",
+                        "tie_breaker_field": "ListingKey",
+                        "tie_breaker_format": "STRING"
+                      },
+                      "field_mappings": {
+                        "@odata.id": "odata_id"
+                      },
+                      "initial_query_parameters": {
+                        "$filter": "ModificationTimestamp ge 2026-01-01T00:00:00Z"
+                      },
+                      "pagination": {
+                        "data_pointer": "/value",
+                        "max_pages_per_run": 1000,
+                        "mode": "NEXT_LINK",
+                        "next_pointer": "/@odata.nextLink",
+                        "page_size": 1000,
+                        "page_size_parameter": "$top"
+                      },
+                      "query_parameters": {
+                        "$filter": "ModificationTimestamp gt ${cursor} or (ModificationTimestamp eq ${cursor} and ListingKey gt ${tie_breaker})"
+                      },
+                      "request_path": "/v2/Property"
+                    }
+                  ],
+                  "validate_server_address": true,
+                  "version": 1
+                }
+              }
+            ],
+            "title": "Snapshot Config",
             "type": "object"
           },
           "type": {
@@ -477,6 +619,11 @@
         "properties": {
           "char_encoding": {
             "default": "UTF_8",
+            "description": "Character encoding of the uploaded CSV. Case-insensitive.",
+            "enum": [
+              "UTF_8",
+              "UTF_16"
+            ],
             "title": "Char Encoding",
             "type": "string"
           },
@@ -535,10 +682,17 @@
             "title": "Description"
           },
           "from_source": {
-            "description": "Source path exactly as returned by browse connection resources.",
-            "minLength": 1,
-            "title": "From Source",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Source path exactly as returned by browse connection resources. Omit for request-shaped connections (e.g. HTTP APIs), where the server derives it from the connection and params.",
+            "title": "From Source"
           },
           "name": {
             "anyOf": [
@@ -551,11 +705,67 @@
             ],
             "description": "Optional dataset name; the server derives one when omitted.",
             "title": "Name"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Connector-specific dataset parameters, using exactly the keys the connection type documents \u2014 e.g. for HTTP API connections: http_request_path (required, starts with '/'), request_body (string template), request_headers (flat object), pagination_data_pointer (JSON pointer to the response rows), plus the connector's pagination settings. Values are scalars or one flat object of scalars. Never include credentials \u2014 authentication comes from the connection, and auth-related keys are rejected.",
+            "title": "Params"
+          },
+          "snapshot_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opt this dataset into snapshotting (a periodic copy into Summation's lakehouse) regardless of the connection's policy. Omit to inherit the connection's snapshot setting. Required before a dataset snapshot can be taken for sources whose connection has snapshotting off.",
+            "title": "Snapshot Enabled"
           }
         },
-        "required": [
-          "from_source"
-        ],
         "title": "DatasetAttachSpec",
         "type": "object"
       },
@@ -599,6 +809,21 @@
           }
         },
         "title": "FileImportRequest",
+        "type": "object"
+      },
+      "FileUploadFinalizeRequest": {
+        "properties": {
+          "path": {
+            "description": "Workspace path to register the uploaded file at (e.g. /sales-2026.csv).",
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FileUploadFinalizeRequest",
         "type": "object"
       },
       "FileWriteRequest": {
@@ -962,6 +1187,25 @@
             "description": "Optional alternate rendering of the message for display; the agent still receives message.",
             "title": "Display Content"
           },
+          "effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reasoning effort for this turn (low, medium, high, xhigh, max). Honored under the same tenant setting as model selection; otherwise the default effort applies.",
+            "title": "Effort"
+          },
           "file_ids": {
             "description": "Project file ids to attach to the message as context.",
             "items": {
@@ -983,6 +1227,19 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Chat model id to use for this turn, from GET /v1/chat-models. Per-request model selection is honored where enabled for the tenant; otherwise the default model applies. The reply metadata reports the model that ran.",
+            "title": "Model"
           },
           "title": {
             "anyOf": [
@@ -1226,10 +1483,55 @@
         "title": "ScheduleRunCreateRequest",
         "type": "object"
       },
+      "SumAppRegistration": {
+        "description": "Deploy-pipeline registration of a deployed SumApp (POST /v1/sum-apps).",
+        "properties": {
+          "app": {
+            "description": "The app's manifest id, e.g. self-driving-roi.",
+            "title": "App",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "description": "Launcher card description.",
+            "title": "Description",
+            "type": "string"
+          },
+          "path": {
+            "default": "",
+            "description": "Mount path, e.g. /p/sdr-roi/.",
+            "title": "Path",
+            "type": "string"
+          },
+          "slug": {
+            "description": "Mount slug on the tenant app host (unique per tenant), e.g. sdr-roi.",
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "description": "Launcher card title.",
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "Full URL on the tenant app host.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "slug"
+        ],
+        "title": "SumAppRegistration",
+        "type": "object"
+      },
       "TableAppendRowsRequest": {
         "properties": {
           "rows": {
-            "description": "Rows to append, 1 to 500 per request. Each row is an object of column_name to scalar value; values are coerced to their column type by the table's schema. Append-only \u2014 existing rows are never modified.",
+            "description": "Rows to append, 1 to 500 per request. Each row is an object of column_name to scalar value; values are coerced to their column type by the table's schema. Every row must carry the same column names, and each must include the table's primary key column(s) \u2014 primary keys are caller-supplied, not auto-generated. Append-only \u2014 existing rows are never modified.",
             "items": {
               "additionalProperties": {
                 "anyOf": [
@@ -1334,6 +1636,17 @@
         "properties": {
           "data_type": {
             "default": "STRING",
+            "description": "Column type in the imported table. Case-insensitive.",
+            "enum": [
+              "INTEGER",
+              "DECIMAL",
+              "BIG_DECIMAL",
+              "BOOLEAN",
+              "STRING",
+              "DATE",
+              "DATETIME",
+              "UUID"
+            ],
             "title": "Data Type",
             "type": "string"
           },
@@ -1396,6 +1709,12 @@
           },
           "import_type": {
             "default": "NEW",
+            "description": "How the asset is applied: 'NEW' imports it into a new table, 'FULL_REFRESH' re-imports the full asset into a previously imported table (replacing its rows), 'INCREMENTAL_REFRESH' appends the asset's rows to a previously imported table. Case-insensitive.",
+            "enum": [
+              "NEW",
+              "FULL_REFRESH",
+              "INCREMENTAL_REFRESH"
+            ],
             "title": "Import Type",
             "type": "string"
           },
@@ -1415,6 +1734,62 @@
           "table_name"
         ],
         "title": "TableImportRequest",
+        "type": "object"
+      },
+      "TableUpsertRowsRequest": {
+        "additionalProperties": false,
+        "description": "Upsert rows keyed on their business columns.\n\nThe primary key (s_id) is derived server-side from key_columns, so rows must\nNOT carry s_id; re-sending the same entity updates it in place rather than\nduplicating. Inherits the same per-row validation as append.",
+        "properties": {
+          "key_columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Business-key column names that identify a row. The stable primary key (s_id) is derived deterministically from just these columns, so the same entity always maps to the same row: re-sending it updates in place. Each must be present and non-empty in every row. Omit to use the table's own declared business keys \u2014 the usual case, so a caller need not restate keys the table already defines. If provided, must not be empty, and must match the table's declared key columns exactly whenever the rows carry any of them: the declared keys are the row identity the backend enforces, so no other identity can upsert them idempotently.",
+            "title": "Key Columns"
+          },
+          "rows": {
+            "description": "Rows to upsert, 1 to 500 per request. Each row is an object of column_name to scalar value; values are coerced to their column type by the table's schema. Every row must carry the same column names. Do NOT include the primary key (s_id) \u2014 it is derived from key_columns.",
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "TableUpsertRowsRequest",
         "type": "object"
       },
       "TokenResponse": {
@@ -1865,7 +2240,7 @@
     },
     "/v1/auth/m2m/token": {
       "post": {
-        "description": "Exchange machine credentials for a bearer access token.\n\nThe first call of every integration: send ``client_id`` and\n``client_secret`` (form-encoded, ``grant_type=client_credentials``) and\nreceive ``access_token`` with ``expires_in`` seconds. Pass it as\n``Authorization: Bearer <token>`` on all other endpoints, cache it, and\nre-exchange shortly before expiry.",
+        "description": "Exchange machine credentials for a bearer access token.\n\nThe first call of every integration: send ``client_id`` and\n``client_secret`` (form-encoded, ``grant_type=client_credentials``) and\nreceive ``access_token`` with ``expires_in`` seconds. Pass it as\n``Authorization: Bearer <token>`` on all other endpoints, cache it, and\nre-exchange shortly before expiry.\n\nCredentials may instead be presented via HTTP Basic auth\n(``Authorization: Basic base64(client_id:client_secret)``) per RFC 6749\n\u00a72.3.1 \u2014 use one method per request, not a mix. Generated OAuth2 clients\n(e.g. Workato's connector SDK) default to Basic.",
         "operationId": "issue_m2m_token",
         "requestBody": {
           "content": {
@@ -1986,6 +2361,93 @@
         "summary": "Show current identity",
         "tags": [
           "Auth"
+        ]
+      }
+    },
+    "/v1/chat-models": {
+      "get": {
+        "description": "List the chat models this caller may select for analyst conversations,\nplus the accepted reasoning-effort levels.\n\nThe catalog is tenant-aware and lists only selectable models: when\nper-request model selection is not enabled for the tenant, only the default\nmodel is returned and ``model``/``effort`` on conversation requests fall\nback to defaults. Each model reports whether it honors reasoning effort and\nwhich levels; ``effortLevels`` is the schema-wide vocabulary. Pass a\nreturned model ``id`` as ``model`` on conversation create/reply.",
+        "operationId": "list_chat_models",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List chat models",
+        "tags": [
+          "Conversations"
         ]
       }
     },
@@ -2832,7 +3294,7 @@
         ]
       },
       "post": {
-        "description": "Create a data connection to an external source (e.g. Postgres,\nSnowflake).\n\n``config`` holds non-secret settings; credentials go in ``secrets`` and\nare stored server-side, never returned. A new connection reports status\nACTIVE and ``lastTestStatus`` empty: status ACTIVE means the record\nexists, NOT that credentials work. Call the connection test endpoint to\nverify \u2014 it sets ``lastTestStatus`` to ``PASS``/``FAIL`` and stamps\n``lastTestedAt``. Check ``lastTestStatus == PASS`` before relying on a\nconnection, and attach datasets before expecting any data to be analyzable.",
+        "description": "Create a data connection to an external source (e.g. Postgres,\nSnowflake).\n\n``config`` holds non-secret settings; credentials go in ``secrets`` and\nare stored server-side, never returned. A new connection reports status\nACTIVE and ``lastTestStatus`` empty: status ACTIVE means the record\nexists, NOT that credentials work. Call the connection test endpoint to\nverify \u2014 it sets ``lastTestStatus`` to ``PASS``/``FAIL`` and stamps\n``lastTestedAt``. Check ``lastTestStatus == PASS`` before relying on a\nconnection, and attach datasets before expecting any data to be analyzable.\n\nFor an HTTP/REST connection only, configure durable incremental requests in\nconnector-level ``snapshot_config.http_replication``. Do not place advanced\nreplication settings in ``config`` or in a dataset's snapshot settings. The\nrequest schema documents the supported limits, resources, cursors,\npagination modes, and a complete example.",
         "operationId": "create_data_connection",
         "requestBody": {
           "content": {
@@ -3163,7 +3625,7 @@
         ]
       },
       "patch": {
-        "description": "Update a connection's settings or rotate its secrets. Fields omitted\nfrom the body are left unchanged; secrets are write-only.",
+        "description": "Update a connection's settings or rotate its secrets. Fields omitted\nfrom the body are left unchanged; secrets are write-only.\n\nA present ``snapshot_config`` replaces the stored policy, with one\nprotection: on HTTP connections, omitting the ``http_replication`` key\npreserves the stored ``http_replication`` \u2014 clients that do not round-trip\nit cannot erase it. Include ``http_replication`` to replace it, or set it\nto ``null`` to clear it; other keys always reflect exactly what was sent.\nOmit ``snapshot_config`` entirely to leave the whole policy unchanged.\n``http_replication`` is valid only for HTTP/REST connector types and must\nnot be copied to dataset settings.",
         "operationId": "update_data_connection",
         "parameters": [
           {
@@ -3387,7 +3849,7 @@
         ]
       },
       "post": {
-        "description": "Attach source tables from a connected data source as datasets, making them available for analysis and queries.\n\nWorkflow: browse the connection's resources first, then pass each chosen\n``from_source`` value here exactly as returned \u2014 never rewrite or guess\nsource paths. Up to 100 datasets attach in one atomic request; dataset\nnames are derived automatically (with collision handling) unless provided.\n\nAttachment returns immediately; data loading continues in the background.\nEach returned dataset carries a ``status`` and a ``proxy_table_status``;\na dataset is queryable only once ``status`` is ``DEPLOYED`` **and**\n``proxy_table_status`` is ``CREATED``. Poll the connection's dataset list\nuntil both hold before querying. Credentials come from the connection\nitself \u2014 never include secrets in this request.",
+        "description": "Attach source tables from a connected data source as datasets, making them available for analysis and queries.\n\nWorkflow for browsable sources (warehouses, databases, files): browse the\nconnection's resources first, then pass each chosen ``from_source`` value\nhere exactly as returned \u2014 never rewrite or guess source paths. For\nrequest-shaped sources (HTTP API connections), omit ``from_source`` and\ndescribe the request via ``params`` (``http_request_path``,\n``request_body``, ``pagination_data_pointer``, pagination settings \u2026); the\nserver derives the source from the connection. Up to 100 datasets attach in\none atomic request; dataset names are derived automatically (with collision\nhandling) unless provided.\n\nAttachment returns immediately; data loading continues in the background.\nEach returned dataset carries a ``status`` and a ``proxy_table_status``;\na dataset is queryable only once ``status`` is ``DEPLOYED`` **and**\n``proxy_table_status`` is ``CREATED``. Poll the connection's dataset list\nuntil both hold before querying. Credentials come from the connection\nitself \u2014 never include secrets in this request.",
         "operationId": "attach_data_connection_datasets",
         "parameters": [
           {
@@ -3503,9 +3965,126 @@
         ]
       }
     },
+    "/v1/connections/data/{connection_id}/datasets/{dataset_id}/snapshots": {
+      "post": {
+        "description": "Take a snapshot of a dataset now \u2014 copy its current source data into\nSummation's lakehouse so downstream tables (e.g. calculation tables over raw\nAPI responses) can build on a stable copy.\n\nSnapshotting must be enabled for the dataset (``snapshot_enabled`` at attach,\nor the connection's snapshot policy); otherwise this returns a conflict\nexplaining what to enable. Returns ``202`` once the snapshot run is queued \u2014\npoll the connection's snapshot runs until its ``status`` is terminal, then\nfind the copied table via ``snapshotTableName``. One snapshot per dataset\nruns at a time; a second request while one is active returns a conflict.",
+        "operationId": "snapshot_data_connection_dataset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Snapshot dataset",
+        "tags": [
+          "Data Connectors"
+        ]
+      }
+    },
     "/v1/connections/data/{connection_id}/resources": {
       "post": {
-        "description": "List the databases, schemas, and tables reachable inside a connection's\nsource system.\n\nBrowsing shows what *could* be attached \u2014 it does not attach anything.\nDrill down by passing ``path_prefix`` (e.g. a database, then\n``DB.SCHEMA``); each returned resource carries its source path in the\n``fromSource`` field \u2014 pass that value verbatim when attaching datasets.\nResults cap at ``max_results`` with a ``truncated`` flag.",
+        "description": "List the databases, schemas, and tables reachable inside a connection's\nsource system.\n\nBrowsing shows what *could* be attached \u2014 it does not attach anything.\nDrill down by passing ``path_prefix`` (e.g. a database, then\n``DB.SCHEMA``); each returned resource carries its source path in the\n``fromSource`` field \u2014 pass that value verbatim when attaching datasets.\nResults cap at ``max_results``. When ``truncated`` is true, pass the\nreturned ``nextPageToken`` into the next request until it is empty.",
         "operationId": "browse_data_connection_resources",
         "parameters": [
           {
@@ -3616,6 +4195,128 @@
           }
         ],
         "summary": "Browse connection resources",
+        "tags": [
+          "Data Connectors"
+        ]
+      }
+    },
+    "/v1/connections/data/{connection_id}/snapshots": {
+      "get": {
+        "description": "List this connection's recent snapshot runs, newest first.\n\nPoll after starting a snapshot: each run carries a ``status`` and per-dataset\ndetails; a dataset's copy is ready when its ``status`` is terminal and\n``snapshotTableName`` names the lakehouse table to build on. Failures carry\n``errorCode``/``errorMessage``.",
+        "operationId": "list_data_connection_snapshot_runs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Most recent runs to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "description": "Most recent runs to return.",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List snapshot runs",
         "tags": [
           "Data Connectors"
         ]
@@ -6795,6 +7496,241 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/files/uploads": {
+      "post": {
+        "description": "Mint a short-lived presigned upload for large files (e.g. a multi-hundred-MB\nCSV) \u2014 the bytes go directly to storage, never through this API.\n\nSubmit a ``multipart/form-data`` POST to the returned ``url`` with **every\nentry of ``fields`` included verbatim as form fields, then the file bytes as\nthe final ``file`` field** (order matters: ``file`` must come last). Uploads\nare capped at ``max_bytes`` (1 GiB) and the URL expires after\n``expires_in_seconds``. Afterwards, register the file with the finalize\nendpoint, then import it as data with the imports endpoint. For small text\nfiles, the write endpoint remains the simpler path.",
+        "operationId": "create_file_upload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Create a presigned upload",
+        "tags": [
+          "Files"
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/files/uploads/{upload_id}/finalize": {
+      "post": {
+        "description": "Register a completed upload as a workspace file at ``path``, with the same\nversioning as a direct write. Returns 404 when nothing was uploaded for this\n``upload_id``, the staged upload expired, or it was already finalized. The\nregistered file can then be imported as analyzable data via the imports\nendpoint.",
+        "operationId": "finalize_file_upload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileUploadFinalizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Finalize a presigned upload",
+        "tags": [
+          "Files"
+        ]
+      }
+    },
     "/v1/projects/{project_id}/files/{file_id}": {
       "delete": {
         "description": "Delete a file. Destructive \u2014 requires ``confirm=true`` and write scope.",
@@ -9508,6 +10444,318 @@
         ]
       }
     },
+    "/v1/sum-apps": {
+      "get": {
+        "description": "List the SumApps deployed for this tenant in this environment.\n\nThe registry is written by the deploy pipeline, so every entry corresponds to a live\ndeployment; the web-app Applications launcher renders exactly this list.",
+        "operationId": "list_sum_apps",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List the tenant's deployed SumApps",
+        "tags": [
+          "SumApps"
+        ]
+      },
+      "post": {
+        "description": "Upsert this tenant's registry entry for a deployed SumApp.\n\nCalled by the deploy pipeline after a successful deploy (scope ``tables:append``).\nKeyed by slug: redeploys refresh title/description/url in place. The Applications\nlauncher renders exactly this registry, so registered == deployed for the\nenvironment this API serves.",
+        "operationId": "register_sum_app",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SumAppRegistration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Register a deployed SumApp",
+        "tags": [
+          "SumApps"
+        ]
+      }
+    },
+    "/v1/sum-apps/{slug}": {
+      "delete": {
+        "description": "Remove a SumApp from the registry (scope ``tables:append``). Idempotent \u2014\nderegistering an unknown slug reports ``removed: false`` rather than an error,\nso deploy-tooling retries are safe.",
+        "operationId": "deregister_sum_app",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Set confirm=true to deregister the app. Required.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true to deregister the app. Required.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Deregister a SumApp",
+        "tags": [
+          "SumApps"
+        ]
+      }
+    },
     "/v1/table-imports": {
       "post": {
         "description": "Import an uploaded file asset into an analyzable table. Use this after creating an upload URL and optionally previewing the asset. For database-backed data, attach datasets on the connection instead of importing files here.",
@@ -10119,7 +11367,7 @@
         ]
       },
       "get": {
-        "description": "Show one table's definition \u2014 columns, types, and source \u2014 by id. Call\nbefore writing SQL against unfamiliar tables.",
+        "description": "Show one table's definition \u2014 columns, types, and source \u2014 by id. Call\nbefore writing SQL against unfamiliar tables.\n\nThe response carries an ``appendable`` boolean: true when the table accepts row\nappends via ``POST /v1/tables/{table_id}/rows`` (a promoted, ACTIVE Summation data\ntable backed by a physical row store), false otherwise. When false,\n``append_disabled_reason`` explains why. Check ``appendable`` before appending\nrather than relying on the append call to 409.",
         "operationId": "show_table",
         "parameters": [
           {
@@ -10598,7 +11846,7 @@
     },
     "/v1/tables/{table_id}/rows": {
       "post": {
-        "description": "Append one or more rows to a table. Append-only: existing rows are never modified or deleted. Each row is an object of column name to scalar value, validated and type-coerced against the table's schema. Every row in a batch must carry the same column names. Returns 200 when all rows insert, 207 when some rows fail (see errors), and 422 when no rows insert. Requires the tables:append scope.",
+        "description": "Append one or more rows to a table. Append-only: existing rows are never modified or deleted. Each row is an object of column name to scalar value, validated and type-coerced against the table's schema. Every row in a batch must carry the same column names.\n\nThe target must be a promoted (ACTIVE) Summation data table \u2014 one backed by a physical row store. Draft or unpromoted tables, calculation tables, and imported tables (e.g. file/CSV imports) have no row store and are rejected with 409; a table appearing with a SUMMATION source in the table list is not sufficient on its own.\n\nEach row must include a value for the table's primary key column(s) \u2014 primary keys are caller-supplied, not auto-generated. A row missing its primary key is rejected with 400.\n\nReturns 200 when all rows insert, 207 when some rows fail (see errors), and 422 when no rows insert. Requires the tables:append scope.",
         "operationId": "append_table_rows",
         "parameters": [
           {
@@ -10632,6 +11880,114 @@
           },
           "207": {
             "description": "Some rows inserted; response includes errors for failed rows."
+          },
+          "400": {
+            "description": "Invalid row content, e.g. a row missing its primary key column(s)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "409": {
+            "description": "Table does not accept row appends: it is not a promoted (ACTIVE) Summation data table backed by a physical row store."
+          },
+          "422": {
+            "description": "No rows inserted; response includes row-level errors."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Append rows to a table",
+        "tags": [
+          "Tables"
+        ]
+      },
+      "put": {
+        "description": "Insert-or-update rows keyed on their business columns. Each row's stable primary key (s_id) is derived from the key columns, so rows whose key already exists are updated in place and new keys are inserted \u2014 sending the same entity again is idempotent. `key_columns` is optional: omit it to use the table's own declared business keys (the usual case), or pass it to override \u2014 an override must match the declared keys exactly unless the rows leave the declared key columns out entirely. Returns 200 when all succeed, 207 when some fail (see errors), and 422 when none do. Requires the tables:append scope.",
+        "operationId": "upsert_table_rows",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "title": "Table Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableUpsertRowsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "207": {
+            "description": "Some rows upserted; response includes errors for failed rows."
           },
           "400": {
             "content": {
@@ -10674,7 +12030,7 @@
             "description": "Resource not found or not accessible."
           },
           "422": {
-            "description": "No rows inserted; response includes row-level errors."
+            "description": "No rows upserted; response includes row-level errors."
           },
           "429": {
             "content": {
@@ -10700,11 +12056,11 @@
         "security": [
           {
             "SummationMachineAuth": [
-              "agent:write"
+              "tables:append"
             ]
           }
         ],
-        "summary": "Append rows to a table",
+        "summary": "Upsert rows into a table",
         "tags": [
           "Tables"
         ]
