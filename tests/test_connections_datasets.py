@@ -261,6 +261,72 @@ def test_attach_builds_specs_from_repeated_source() -> None:
     assert [d["id"] for d in body["result"]["datasets"]] == ["ds_1", "ds_2"]
 
 
+@pytest.mark.parametrize(
+    "entries",
+    [
+        ["db.public.orders", "db.public.users"],
+        [None],
+        [{"from_source": "a"}, "b"],
+        [["nested"]],
+    ],
+    ids=["strings", "null", "mixed", "nested-list"],
+)
+def test_attach_rejects_non_object_dataset_entries(tmp_path: Path, entries: list) -> None:
+    """Regression: assigning --snapshot-enabled into a non-dict entry raised TypeError,
+    surfacing as INTERNAL_ERROR with a useless 'retry' hint."""
+    spec_file = tmp_path / "datasets.json"
+    spec_file.write_text(json.dumps({"datasets": entries}))
+    result, client = _run(
+        [
+            "connections",
+            "attach-datasets",
+            "conn_1",
+            "--datasets-file",
+            str(spec_file),
+            "--snapshot-enabled",
+        ]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+def test_attach_rejects_non_object_entries_without_snapshot_flag(tmp_path: Path) -> None:
+    """The flag must not change whether malformed input is caught — before the fix,
+    omitting it forwarded the bad body to the server instead."""
+    spec_file = tmp_path / "datasets.json"
+    spec_file.write_text(json.dumps({"datasets": ["db.public.orders"]}))
+    result, client = _run(
+        ["connections", "attach-datasets", "conn_1", "--datasets-file", str(spec_file)]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
+@pytest.mark.parametrize("flag,value", [("--name", "n"), ("--description", "d")])
+def test_attach_rejects_name_or_description_with_datasets_file(
+    tmp_path: Path, flag: str, value: str
+) -> None:
+    """Regression: these were silently dropped, exiting 0 while the flags vanished."""
+    spec_file = tmp_path / "datasets.json"
+    spec_file.write_text(json.dumps({"datasets": [{"from_source": "db.public.orders"}]}))
+    result, client = _run(
+        [
+            "connections",
+            "attach-datasets",
+            "conn_1",
+            "--datasets-file",
+            str(spec_file),
+            flag,
+            value,
+        ]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
+
+
 def test_attach_applies_name_and_description_to_single_source() -> None:
     _, client = _run(
         [

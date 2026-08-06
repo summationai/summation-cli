@@ -251,6 +251,13 @@ def attach_datasets(
             "Use either --from-source or --datasets-file, not both.",
             "Put every dataset in --datasets-file, or drop it and repeat --from-source.",
         )
+    if datasets_file and (name or description):
+        # The file names each dataset itself, so these flags would be silently
+        # dropped. Reject rather than ignore.
+        _invalid(
+            "--name/--description cannot be combined with --datasets-file.",
+            'Set "name" and "description" on each entry inside --datasets-file.',
+        )
     if datasets_file:
         parsed = _load_json_object(
             datasets_file,
@@ -262,6 +269,13 @@ def attach_datasets(
             _invalid(
                 "--datasets-file must contain a non-empty `datasets` array.",
                 'Use {"datasets": [{"from_source": "db.schema.table"}]}.',
+            )
+        # Element types matter: the snapshot loop below assigns into each entry, so a
+        # bare string would raise TypeError instead of reporting a usable error.
+        if not all(isinstance(spec, dict) for spec in specs):
+            _invalid(
+                "--datasets-file `datasets` entries must be JSON objects.",
+                'Use {"datasets": [{"from_source": "db.schema.table"}]}, not a list of strings.',
             )
     else:
         if not from_source:
