@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -13,12 +12,12 @@ from sum_cli.commands import (
     api_client,
     api_confirm_params,
     extract_list,
+    load_json_object,
     require_confirm,
     require_project,
     unwrap_data,
 )
-from sum_cli.output import emit, emit_error, err, ok, truncate_list
-from sum_cli.output import invalid_request as _invalid
+from sum_cli.output import emit, emit_error, err, invalid_request, ok, truncate_list
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -56,7 +55,7 @@ def _check_recipient_limit(emails: list[str] | None) -> None:
     """Pure input validation, called before require_project so an over-long list
     does not need a resolved project to report — matches the chats.py ordering."""
     if emails and len(emails) > _MAX_RECIPIENTS:
-        _invalid(
+        invalid_request(
             f"--email was given {len(emails)} times; the limit is {_MAX_RECIPIENTS}.",
             f"Send to {_MAX_RECIPIENTS} recipients or fewer.",
         )
@@ -67,7 +66,7 @@ def _parse_recipient(raw: str) -> dict:
     parts = raw.split(":", 2)
     email = parts[0].strip()
     if not email:
-        _invalid(
+        invalid_request(
             f"Invalid --email value {raw!r}: missing address.",
             "Use --email address[:type[:name]], e.g. --email ceo@acme.com:cc:Dana.",
         )
@@ -75,7 +74,7 @@ def _parse_recipient(raw: str) -> dict:
     if len(parts) > 1 and parts[1].strip():
         rtype = parts[1].strip().lower()
         if rtype not in _RECIPIENT_TYPES:
-            _invalid(
+            invalid_request(
                 f"Invalid recipient type {rtype!r} in --email {raw!r}.",
                 f"Use one of: {', '.join(_RECIPIENT_TYPES)}.",
             )
@@ -89,29 +88,11 @@ def _parse_param(raw: str) -> tuple[str, str]:
     """Parse ``--param key=value``. Playbook params are strings per the contract."""
     key, sep, value = raw.partition("=")
     if not sep or not key.strip():
-        _invalid(
+        invalid_request(
             f"Invalid --param value {raw!r}: expected key=value.",
             "Use --param key=value, e.g. --param region=emea.",
         )
     return key.strip(), value
-
-
-def _load_json_object(path: Path, flag: str) -> dict:
-    try:
-        parsed = json.loads(path.read_text())
-    except UnicodeDecodeError as exc:
-        # Not JSONDecodeError: read_text() fails before parsing on non-UTF-8 bytes.
-        _invalid(f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON.")
-    except ValueError as exc:
-        # Subsumes json.JSONDecodeError.
-        _invalid(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON object in {flag}.")
-    except OSError as exc:
-        _invalid(
-            f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
-        )
-    if not isinstance(parsed, dict):
-        _invalid(f"{flag} must contain a JSON object.", 'Use an object, e.g. {"subject": "..."}.')
-    return parsed
 
 
 def _build_schedule_expression(
@@ -129,7 +110,7 @@ def _build_schedule_expression(
     anchor_date: str | None,
 ) -> dict:
     if type not in _SCHEDULE_TYPES:
-        _invalid(
+        invalid_request(
             f"Invalid --type {type!r}.",
             f"Use one of: {', '.join(_SCHEDULE_TYPES)}.",
         )
@@ -149,7 +130,7 @@ def _build_schedule_expression(
         for day in days_of_week:
             upper = day.strip().upper()
             if upper not in _DAYS_OF_WEEK:
-                _invalid(
+                invalid_request(
                     f"Invalid --day {day!r}.",
                     f"Use one of: {', '.join(_DAYS_OF_WEEK)}.",
                 )
@@ -289,7 +270,9 @@ def _build_config(
     if output_folder is not None:
         config["output_folder"] = output_folder
     if output_config_file is not None:
-        config["output_config"] = _load_json_object(output_config_file, "--output-config-file")
+        config["output_config"] = load_json_object(
+            output_config_file, "--output-config-file", shape_hint='{"subject": "..."}'
+        )
     if emails:
         config["email_recipients"] = [_parse_recipient(raw) for raw in emails]
     if max_concurrent_runs is not None:
@@ -562,7 +545,7 @@ def update_schedule(
         # value. Default it rather than making the user run `show` to copy it back.
         target_playbook = playbook or _existing_playbook_id(current)
         if not target_playbook:
-            _invalid(
+            invalid_request(
                 f"Schedule {schedule_id} has no playbook id to reuse.",
                 "Pass --playbook with the id from `sumcli schedules show`.",
             )
