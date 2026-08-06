@@ -99,15 +99,6 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/v1/projects/*/reports"): "Report listing is via files, not a dedicated command.",
     ("DELETE", "/v1/projects/*/reports/*"): "Report delete is via files delete.",
     ("GET", "/v1/projects/*/reports/*/content"): "Report content export not exposed in sumcli.",
-    ("GET", "/v1/schedules"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules"): "Schedules not exposed in sumcli.",
-    ("DELETE", "/v1/schedules/*"): "Schedules not exposed in sumcli.",
-    ("GET", "/v1/schedules/*"): "Schedules not exposed in sumcli.",
-    ("PUT", "/v1/schedules/*"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules/*/pause"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules/*/resume"): "Schedules not exposed in sumcli.",
-    ("GET", "/v1/schedules/*/runs"): "Schedules not exposed in sumcli.",
-    ("POST", "/v1/schedules/*/runs"): "Schedules not exposed in sumcli.",
     ("POST", "/v1/tables/*/rows"): "Row append not exposed in sumcli.",
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
@@ -556,6 +547,7 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "chats": "Chats (Addison conversations).",
     "reports": "Generate and verify reports (.sdoc). List/download/delete via files.",
     "playbooks": "Playbook discovery.",
+    "schedules": "Recurring playbook schedules and their runs.",
     "files": "Project-scoped files.",
     "filesystem": "External storage providers (SharePoint).",
     "catalog": "Project catalog entries (tables/views attached to project).",
@@ -602,6 +594,12 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
     "reports": {
         "verify": "Verify a report or document by file id (--wait/--no-wait, --follow).",
     },
+    "schedules": {
+        # PUT replaces the schedule, and the target cannot change — the bare spec
+        # summary ("Update schedule") reads as a partial update, which it is not.
+        "update": "Replace a schedule; resend every field, and keep the same --playbook target.",
+        "delete": "Delete a schedule (--confirm).",
+    },
     "tables": {
         "import": "Import from local file (multi-step; --wait/--no-wait).",
     },
@@ -614,8 +612,7 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "delete": "Delete a file or folder by item id (--confirm).",
         "set-defaults": "Persist --root/--path defaults in config (--provider required).",
         "import-env": (
-            "Import SHAREPOINT_* from a skill-style env file into "
-            "~/.summation/summation-config."
+            "Import SHAREPOINT_* from a skill-style env file into ~/.summation/summation-config."
         ),
     },
 }
