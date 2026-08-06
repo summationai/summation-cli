@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
@@ -27,7 +27,10 @@ _MAX_ATTACH_DATASETS = 100
 _MAX_SNAPSHOT_LIMIT = 50
 
 
-def _invalid(message: str, fix: str) -> None:
+def _invalid(message: str, fix: str) -> NoReturn:
+    # NoReturn, not None: emit_error exits, so every call site ends the command.
+    # Annotating it lets a type checker flag a real fall-through instead of
+    # leaving the next reader to go check output.py (matches schedules.py).
     emit_error(err("INVALID_REQUEST", message, fix))
 
 
