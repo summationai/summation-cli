@@ -29,7 +29,7 @@ def load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
     """Read a JSON object from ``path``, reporting every failure as INVALID_REQUEST.
 
     ``shape_hint`` is an example of the expected object, shown when the file parses
-    but is not an object -- each flag expects a different shape.
+    but is not an object — each flag expects a different shape.
     """
     try:
         parsed = json.loads(path.read_text())

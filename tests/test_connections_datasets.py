@@ -286,13 +286,53 @@ def test_create_reports_every_unknown_config_file_key(tmp_path: Path) -> None:
     assert "zeta" in message
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"config": "a string"},
+        {"secrets": None},
+        {"config": []},
+        {"config": {"host": "h"}, "secrets": 123},
+    ],
+)
+@pytest.mark.parametrize("command", ["create", "update"])
+def test_config_file_rejects_non_object_values(tmp_path: Path, command: str, body: dict) -> None:
+    """Key names were checked but value types were not, so a scalar reached the wire
+    and came back as a server 422 the caller had to decode. Both commands share the
+    validator, so both reject it client-side."""
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps(body))
+    args = (
+        ["connections", "create", "--name", "n", "--type", "T", "--config-file", str(config_file)]
+        if command == "create"
+        else ["connections", "update", "c1", "--config-file", str(config_file)]
+    )
+    result, client = _run(args)
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_REQUEST"
+    assert "must be JSON objects" in payload["error"]["message"]
+    client.request.assert_not_called()
+
+
+def test_config_file_reports_every_non_object_value(tmp_path: Path) -> None:
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps({"config": "x", "secrets": 1}))
+    result, _ = _run(
+        ["connections", "create", "--name", "n", "--type", "T", "--config-file", str(config_file)]
+    )
+    message = json.loads(result.stdout)["error"]["message"]
+    assert "config" in message
+    assert "secrets" in message
+
+
 # --- update (--config-file handling) ----------------------------------------
 
 
 def test_update_rotates_secrets_without_clearing_config(tmp_path: Path) -> None:
     """PATCH leaves omitted fields unchanged, so a rotation must send secrets alone.
     Verified against the live API: config survived. The load-bearing case is
-    snapshot_config (see below) -- a present value replaces the stored policy."""
+    snapshot_config (see below) — a present value replaces the stored policy."""
     config_file = tmp_path / "rotate.json"
     config_file.write_text(json.dumps({"secrets": {"snowflake_password": "new-pw"}}))
     _, client = _run(

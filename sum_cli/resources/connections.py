@@ -27,9 +27,34 @@ _MAX_ATTACH_DATASETS = 100
 _MAX_SNAPSHOT_LIMIT = 50
 # Body keys ConnectionWriteRequest accepts from --config-file. ``name``/``type``/
 # ``description`` are excluded: they come from flags, so a file key would fight the
-# command line. Anything else is rejected rather than dropped -- a silently ignored
+# command line. Anything else is rejected rather than dropped — a silently ignored
 # snapshot_config would leave snapshotting off with exit 0.
 _CONFIG_FILE_KEYS = ("config", "secrets", "snapshot_config")
+
+
+def _config_file_body(path: Path, *, flag_hint: str) -> dict:
+    """Parse and validate a --config-file, returning only the keys it contains.
+
+    Validates key names and value types. Every key of ConnectionWriteRequest this
+    flag accepts is an object, so a scalar is caught here rather than sent on to
+    fail as a server 422 the caller has to decode.
+    """
+    extra = load_json_object(
+        path, "--config-file", shape_hint='{"config": {...}, "secrets": {...}}'
+    )
+    unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
+    if unknown:
+        invalid_request(
+            f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
+            f"Use only {', '.join(_CONFIG_FILE_KEYS)}; {flag_hint}",
+        )
+    bad = sorted(key for key, value in extra.items() if not isinstance(value, dict))
+    if bad:
+        invalid_request(
+            f"--config-file values must be JSON objects: {', '.join(bad)}.",
+            'Use {"config": {"host": "..."}}, not a string, list, or null.',
+        )
+    return extra
 
 
 @app.command("list")
@@ -83,18 +108,9 @@ def create_connection(
     if description:
         payload["description"] = description
     if config_file:
-        extra = load_json_object(
-            config_file,
-            "--config-file",
-            shape_hint='{"config": {...}, "secrets": {...}}',
+        extra = _config_file_body(
+            config_file, flag_hint="set name, type, and description with their flags."
         )
-        unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
-        if unknown:
-            invalid_request(
-                f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
-                f"Use only {', '.join(_CONFIG_FILE_KEYS)}; set name, type, and "
-                "description with their flags.",
-            )
         # Assign, never setdefault: the file is the caller's explicit input and must
         # win over anything already on the payload.
         payload["config"] = extra.get("config", {})
@@ -131,20 +147,11 @@ def update_connection(
     if description:
         payload["description"] = description
     if config_file:
-        extra = load_json_object(
-            config_file,
-            "--config-file",
-            shape_hint='{"secrets": {"password": "..."}}',
+        extra = _config_file_body(
+            config_file, flag_hint="set name and description with their flags."
         )
-        unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
-        if unknown:
-            invalid_request(
-                f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
-                f"Use only {', '.join(_CONFIG_FILE_KEYS)}; set name and description "
-                "with their flags.",
-            )
         # PATCH leaves omitted fields unchanged, so forward only the keys the file
-        # actually has -- never create's `.get(key, {})` default. For snapshot_config
+        # actually has — never create's `.get(key, {})` default. For snapshot_config
         # that is load-bearing: the spec says a present value replaces the stored
         # policy, and the server does accept an empty object, so defaulting it would
         # erase the policy on a secrets-only rotation. (Empty config/secrets happen to
