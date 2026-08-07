@@ -20,15 +20,31 @@ _DOCS = ("README.md", "README-pypi.md", ".agents/skills/sumcli/SKILL.md")
 # the scan below cannot see them. Both are verified by their own tests elsewhere.
 _CUSTOM_GATES = frozenset({"schedules run", "config delete-profile"})
 
+# One nesting level of parens, so a call like require_confirm(f(x), action_name="…")
+# still matches. Plain [^)]* fails open at the first ")".
+_REQUIRE_CONFIRM_ACTION = re.compile(
+    r'require_confirm\((?:[^()]|\([^()]*\))*?action_name="([^"]+)"',
+    re.DOTALL,
+)
+
 
 def _gated_commands() -> set[str]:
     """Every command that refuses to run without --confirm, read from the source."""
-    found = set()
+    found: list[str] = []
+    calls = 0
     for path in (_ROOT / "sum_cli").rglob("*.py"):
-        found.update(re.findall(r'require_confirm\([^)]*action_name="([^"]+)"', path.read_text()))
+        text = path.read_text()
+        # Includes the `def require_confirm(` in commands.py (no action_name).
+        calls += len(re.findall(r"\brequire_confirm\(", text))
+        found.extend(_REQUIRE_CONFIRM_ACTION.findall(text))
+    # calls counts the definition too; every real call site must yield an action_name
+    # or a nested-paren miss would silently shrink the set and keep the docs tests green.
+    assert len(found) == calls - 1, (
+        f"require_confirm scan missed call sites: expected {calls - 1} action_name "
+        f"matches, got {len(found)}"
+    )
     # The overwrite-only gate is conditional, so the docs describe it separately.
-    found.discard("filesystem upload overwrite")
-    return found | _CUSTOM_GATES
+    return (set(found) - {"filesystem upload overwrite"}) | _CUSTOM_GATES
 
 
 def _documented_commands(doc: str) -> set[str]:
@@ -51,6 +67,6 @@ def test_destructive_list_covers_every_gated_command(doc: str) -> None:
 def test_destructive_list_has_no_phantom_commands(doc: str) -> None:
     """A command removed from the code must not linger in the docs."""
     listed = _documented_commands(doc)
-    # The line also names `--confirm` itself and the conditional upload gate.
+    # The conditional upload gate is named on the line but excluded from the scan.
     phantom = {c for c in listed - _gated_commands() if c != "filesystem upload"}
     assert not phantom, f"{doc} lists commands that are not confirm-gated: {sorted(phantom)}"
