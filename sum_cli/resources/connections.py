@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -13,11 +12,11 @@ from sum_cli.commands import (
     api_client,
     api_confirm_params,
     extract_list,
+    load_json_object,
     require_confirm,
     unwrap_data,
 )
-from sum_cli.output import emit, ok, truncate_list
-from sum_cli.output import invalid_request as _invalid
+from sum_cli.output import emit, invalid_request, ok, truncate_list
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -28,32 +27,36 @@ _MAX_ATTACH_DATASETS = 100
 _MAX_SNAPSHOT_LIMIT = 50
 # Body keys ConnectionWriteRequest accepts from --config-file. ``name``/``type``/
 # ``description`` are excluded: they come from flags, so a file key would fight the
-# command line. Anything else is rejected rather than dropped -- a silently ignored
+# command line. Anything else is rejected rather than dropped — a silently ignored
 # snapshot_config would leave snapshotting off with exit 0.
 _CONFIG_FILE_KEYS = ("config", "secrets", "snapshot_config")
 
 
-def _load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
-    """Read a JSON object from ``path``, reporting every failure as INVALID_REQUEST.
+def _config_file_body(path: Path, *, flag_hint: str) -> dict:
+    """Parse and validate a --config-file, returning only the keys it contains.
 
-    ``shape_hint`` is an example of the expected object, shown when the file parses
-    but is not an object — each flag expects a different shape.
+    Validates key names and value types. Every key of ConnectionWriteRequest this
+    flag accepts is an object, so a scalar is caught here rather than sent on to
+    fail as a server 422 the caller has to decode.
     """
-    try:
-        parsed = json.loads(path.read_text())
-    except UnicodeDecodeError as exc:
-        # Not JSONDecodeError: read_text() fails before parsing on non-UTF-8 bytes.
-        _invalid(f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON.")
-    except ValueError as exc:
-        # Subsumes json.JSONDecodeError.
-        _invalid(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON object in {flag}.")
-    except OSError as exc:
-        _invalid(
-            f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
+    extra = load_json_object(
+        path,
+        "--config-file",
+        shape_hint='{"config": {...}, "secrets": {...}, "snapshot_config": {...}}',
+    )
+    unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
+    if unknown:
+        invalid_request(
+            f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
+            f"Use only {', '.join(_CONFIG_FILE_KEYS)}; {flag_hint}",
         )
-    if not isinstance(parsed, dict):
-        _invalid(f"{flag} must contain a JSON object.", f"Use an object, e.g. {shape_hint}.")
-    return parsed
+    bad = sorted(key for key, value in extra.items() if not isinstance(value, dict))
+    if bad:
+        invalid_request(
+            f"--config-file values must be JSON objects: {', '.join(bad)}.",
+            'Use {"config": {"host": "..."}}, not a string, list, or null.',
+        )
+    return extra
 
 
 @app.command("list")
@@ -107,20 +110,12 @@ def create_connection(
     if description:
         payload["description"] = description
     if config_file:
-        extra = _load_json_object(
-            config_file,
-            "--config-file",
-            shape_hint='{"config": {...}, "secrets": {...}}',
+        extra = _config_file_body(
+            config_file, flag_hint="set name, type, and description with their flags."
         )
-        unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
-        if unknown:
-            _invalid(
-                f"--config-file has unsupported top-level keys: {', '.join(unknown)}.",
-                f"Use only {', '.join(_CONFIG_FILE_KEYS)}; set name, type, and "
-                "description with their flags.",
-            )
-        # Assign, never setdefault: the file is the caller's explicit input and must
-        # win over anything already on the payload.
+        # POST always needs config/secrets objects; default absent keys to {}. That is
+        # the create/update split: update (below) forwards only keys present in the
+        # file, because PATCH leaves omitted fields unchanged.
         payload["config"] = extra.get("config", {})
         payload["secrets"] = extra.get("secrets", {})
         if "snapshot_config" in extra:
@@ -138,6 +133,17 @@ def update_connection(
     connection_id: Annotated[str, typer.Argument()],
     name: Annotated[str | None, typer.Option("--name")] = None,
     description: Annotated[str | None, typer.Option("--description")] = None,
+    config_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--config-file",
+            help="JSON object with any of: config, secrets, snapshot_config. Use to rotate "
+            "secrets or change settings. Only top-level keys present in the file are "
+            "sent; omitted top-level keys are left unchanged. Each key you send replaces "
+            "the stored object entirely — include the full config/secrets, not a "
+            "partial one. Unknown top-level keys are rejected.",
+        ),
+    ] = None,
     profile: ProfileOption = None,
 ) -> None:
     payload: dict = {}
@@ -145,6 +151,31 @@ def update_connection(
         payload["name"] = name
     if description:
         payload["description"] = description
+    if config_file:
+        extra = _config_file_body(
+            config_file, flag_hint="set name and description with their flags."
+        )
+        # PATCH leaves omitted fields unchanged, so forward only the keys the file
+        # actually has — never create's `.get(key, {})` default. A present key
+        # replaces that stored object wholesale (PATCH contract: fields omitted from
+        # the body are left unchanged; a present field is the new value). For
+        # snapshot_config that is load-bearing and explicit in the spec: defaulting
+        # it would erase the policy on a secrets-only rotation.
+        for key in _CONFIG_FILE_KEYS:
+            if key in extra:
+                payload[key] = extra[key]
+    if not payload:
+        # PATCH with {} succeeds server-side and changes nothing. Exiting 0 on a
+        # no-op reads as "updated", so reject rather than report a false success.
+        if config_file is not None:
+            invalid_request(
+                f"--config-file {config_file} has none of: {', '.join(_CONFIG_FILE_KEYS)}.",
+                'Use e.g. {"secrets": {"password": "..."}} — an empty object changes nothing.',
+            )
+        invalid_request(
+            "No changes given to `connections update`.",
+            "Pass --name, --description, or --config-file.",
+        )
     with api_client(ctx, profile) as c:
         body = c.request("PATCH", f"/v1/connections/data/{connection_id}", json=payload)
     emit(ok({"connection": unwrap_data(body or {}, "data") or body}))
@@ -266,46 +297,46 @@ def attach_datasets(
     profile: ProfileOption = None,
 ) -> None:
     if datasets_file and from_source:
-        _invalid(
+        invalid_request(
             "Use either --from-source or --datasets-file, not both.",
             "Put every dataset in --datasets-file, or drop it and repeat --from-source.",
         )
     if datasets_file and (name or description):
         # The file names each dataset itself, so these flags would be silently
         # dropped. Reject rather than ignore.
-        _invalid(
+        invalid_request(
             "--name/--description cannot be combined with --datasets-file.",
             'Set "name" and "description" on each entry inside --datasets-file.',
         )
     if datasets_file:
-        parsed = _load_json_object(
+        parsed = load_json_object(
             datasets_file,
             "--datasets-file",
             shape_hint='{"datasets": [{"from_source": "db.schema.table"}]}',
         )
         specs = parsed.get("datasets")
         if not isinstance(specs, list) or not specs:
-            _invalid(
+            invalid_request(
                 "--datasets-file must contain a non-empty `datasets` array.",
                 'Use {"datasets": [{"from_source": "db.schema.table"}]}.',
             )
         # Element types matter: the snapshot loop below assigns into each entry, so a
         # bare string would raise TypeError instead of reporting a usable error.
         if not all(isinstance(spec, dict) for spec in specs):
-            _invalid(
+            invalid_request(
                 "--datasets-file `datasets` entries must be JSON objects.",
                 'Use {"datasets": [{"from_source": "db.schema.table"}]}, not a list of strings.',
             )
     else:
         if not from_source:
-            _invalid(
+            invalid_request(
                 "No datasets given.",
                 "Pass --from-source (repeatable) or --datasets-file.",
             )
         # --name/--description describe one dataset; applying either across a repeated
         # --from-source would silently collide, so require a single source for them.
         if len(from_source) > 1 and (name or description):
-            _invalid(
+            invalid_request(
                 f"--name/--description cannot apply to {len(from_source)} sources.",
                 "Attach one --from-source at a time, or use --datasets-file to name each.",
             )
@@ -323,7 +354,7 @@ def attach_datasets(
         for spec in specs:
             spec["snapshot_enabled"] = snapshot_enabled
     if len(specs) > _MAX_ATTACH_DATASETS:
-        _invalid(
+        invalid_request(
             f"{len(specs)} datasets given; the limit is {_MAX_ATTACH_DATASETS} per request.",
             f"Attach {_MAX_ATTACH_DATASETS} or fewer at a time.",
         )
@@ -379,7 +410,7 @@ def list_snapshots(
 ) -> None:
     # Client-side so an out-of-range value reports a fixable message instead of a 422.
     if not 1 <= limit <= _MAX_SNAPSHOT_LIMIT:
-        _invalid(
+        invalid_request(
             f"--limit must be between 1 and {_MAX_SNAPSHOT_LIMIT}; got {limit}.",
             f"Pass --limit between 1 and {_MAX_SNAPSHOT_LIMIT}.",
         )

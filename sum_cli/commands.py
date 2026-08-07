@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from sum_cli.client import Client
 from sum_cli.config import Config, load
-from sum_cli.output import action, emit_error, err, param
+from sum_cli.output import action, emit_error, err, invalid_request, param
 from sum_cli.project_context import resolve_project
 
 ProfileOption = Annotated[
@@ -21,6 +23,32 @@ ProfileOption = Annotated[
         help="Profile to run this command against (overrides the active profile).",
     ),
 ]
+
+
+def load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
+    """Read a JSON object from ``path``, reporting every failure as INVALID_REQUEST.
+
+    ``shape_hint`` is an example of the expected object, shown when the file parses
+    but is not an object — each flag expects a different shape.
+    """
+    try:
+        parsed = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
+        # Not JSONDecodeError: read_text() fails before parsing on non-UTF-8 bytes.
+        invalid_request(
+            f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON."
+        )
+    except ValueError as exc:
+        # Subsumes json.JSONDecodeError.
+        invalid_request(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON object in {flag}.")
+    except OSError as exc:
+        invalid_request(
+            f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
+        )
+    if not isinstance(parsed, dict):
+        invalid_request(f"{flag} must contain a JSON object.", f"Use an object, e.g. {shape_hint}.")
+    return parsed
+
 
 _SET_CONTEXT = action(
     "Set default project for active profile",

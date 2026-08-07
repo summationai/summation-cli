@@ -169,6 +169,25 @@ the call returns a conflict explaining what to turn on. One snapshot per dataset
 at a time. Poll until a run's `status` is terminal, then read `snapshotTableName` for
 the table to build on; failures carry `errorCode` / `errorMessage`.
 
+Updating a connection — rotate a credential or change settings:
+
+```bash
+cat > /tmp/rotate.json <<'EOF'
+{"secrets": {"snowflake_password": "..."}}
+EOF
+sumcli connections update "$CONN" --config-file /tmp/rotate.json
+rm -f /tmp/rotate.json          # always, success or failure
+sumcli connections test "$CONN"  # re-test: rotation does not verify the new credential
+```
+
+`update` takes the same three top-level keys as `create` (`config`, `secrets`,
+`snapshot_config`) and sends **only the top-level keys the file contains** — an
+omitted top-level key is left unchanged, so a secrets-only file does not disturb
+`config`. Each key you *do* send replaces that stored object entirely: include the
+full `config` or `secrets`, not a partial one. Same for `snapshot_config` (the
+spec calls that out explicitly). Use `--name` / `--description` for those two
+fields; they are rejected inside the file.
+
 Removing a connection:
 
 ```bash
@@ -191,9 +210,10 @@ sumcli connections list                         # verify it is gone
    `DEPLOYED` **and** `proxyTableStatus` is `CREATED`. Attachment returns immediately
    and loads in the background, so poll `connections datasets` until both hold — one
    alone is not enough.
-4. **Secrets go through `--config-file`, never a flag or heredoc in chat.** The file
-   keeps the credential out of argv, shell history, and the transcript. Delete it
-   immediately after, on success or failure. Responses return `secretRefs` (e.g.
+4. **Secrets go through `--config-file`, never a flag or heredoc in chat.** True of
+   both `create` and `update` — rotation uses the same file route. The file keeps the
+   credential out of argv, shell history, and the transcript. Delete it immediately
+   after, on success or failure. Responses return `secretRefs` (e.g.
    `CON_PROD_SF_SNOWFLAKE_PASSWORD`), never the value.
 5. **Never create a connection without its secrets.** The API accepts a secretless
    create, but the result cannot be finished in the web app — it strands an orphan

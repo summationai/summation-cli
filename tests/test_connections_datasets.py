@@ -286,6 +286,158 @@ def test_create_reports_every_unknown_config_file_key(tmp_path: Path) -> None:
     assert "zeta" in message
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"config": "a string"},
+        {"secrets": None},
+        {"config": []},
+        {"config": {"host": "h"}, "secrets": 123},
+    ],
+)
+@pytest.mark.parametrize("command", ["create", "update"])
+def test_config_file_rejects_non_object_values(tmp_path: Path, command: str, body: dict) -> None:
+    """Key names were checked but value types were not, so a scalar reached the wire
+    and came back as a server 422 the caller had to decode. Both commands share the
+    validator, so both reject it client-side."""
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps(body))
+    args = (
+        ["connections", "create", "--name", "n", "--type", "T", "--config-file", str(config_file)]
+        if command == "create"
+        else ["connections", "update", "c1", "--config-file", str(config_file)]
+    )
+    result, client = _run(args)
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_REQUEST"
+    assert "must be JSON objects" in payload["error"]["message"]
+    client.request.assert_not_called()
+
+
+def test_config_file_reports_every_non_object_value(tmp_path: Path) -> None:
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps({"config": "x", "secrets": 1}))
+    result, _ = _run(
+        ["connections", "create", "--name", "n", "--type", "T", "--config-file", str(config_file)]
+    )
+    message = json.loads(result.stdout)["error"]["message"]
+    assert "config" in message
+    assert "secrets" in message
+
+
+# --- update (--config-file handling) ----------------------------------------
+
+
+def test_update_rotates_secrets_without_clearing_config(tmp_path: Path) -> None:
+    """PATCH leaves omitted top-level fields unchanged, so a rotation must send
+    secrets alone. A present key replaces that stored object wholesale — this test
+    only proves top-level isolation; see help text for the sub-key replace rule."""
+    config_file = tmp_path / "rotate.json"
+    config_file.write_text(json.dumps({"secrets": {"snowflake_password": "new-pw"}}))
+    _, client = _run(
+        ["connections", "update", "conn_1", "--config-file", str(config_file)],
+        {"data": {"id": "conn_1"}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent == {"secrets": {"snowflake_password": "new-pw"}}
+    assert "config" not in sent
+    assert "snapshot_config" not in sent
+
+
+def test_update_sends_snapshot_config_alone(tmp_path: Path) -> None:
+    """Editing only the snapshot policy must not touch config or secrets."""
+    config_file = tmp_path / "snap.json"
+    config_file.write_text(json.dumps({"snapshot_config": {"enabled": True, "version": 1}}))
+    _, client = _run(
+        ["connections", "update", "conn_1", "--config-file", str(config_file)],
+        {"data": {}},
+    )
+    assert client.request.call_args[1]["json"] == {
+        "snapshot_config": {"enabled": True, "version": 1}
+    }
+
+
+def test_update_never_defaults_snapshot_config(tmp_path: Path) -> None:
+    """The load-bearing case. A present snapshot_config replaces the stored policy,
+    and the server accepts an empty object, so a `.get("snapshot_config", {})` default
+    would erase the policy on a rotation that never mentioned snapshotting."""
+    config_file = tmp_path / "rotate.json"
+    config_file.write_text(json.dumps({"secrets": {"password": "new"}}))
+    _, client = _run(
+        ["connections", "update", "conn_1", "--config-file", str(config_file)],
+        {"data": {}},
+    )
+    assert "snapshot_config" not in client.request.call_args[1]["json"]
+
+
+def test_update_combines_flags_and_file(tmp_path: Path) -> None:
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps({"config": {"host": "h2"}}))
+    _, client = _run(
+        [
+            "connections",
+            "update",
+            "conn_1",
+            "--name",
+            "renamed",
+            "--config-file",
+            str(config_file),
+        ],
+        {"data": {}},
+    )
+    sent = client.request.call_args[1]["json"]
+    assert sent == {"name": "renamed", "config": {"host": "h2"}}
+
+
+def test_update_rejects_unknown_config_file_keys(tmp_path: Path) -> None:
+    config_file = tmp_path / "c.json"
+    config_file.write_text(json.dumps({"snapshotConfig": {"enabled": True}}))
+    result, client = _run(["connections", "update", "conn_1", "--config-file", str(config_file)])
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "snapshotConfig" in body["error"]["message"]
+    client.request.assert_not_called()
+
+
+def test_update_rejects_empty_change_set() -> None:
+    """PATCH {} succeeds and changes nothing; exit 0 would read as "updated"."""
+    result, client = _run(["connections", "update", "conn_1"])
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "--config-file" in body["fix"]
+    client.request.assert_not_called()
+
+
+def test_update_rejects_empty_config_file(tmp_path: Path) -> None:
+    """`--config-file {}` must not hint "pass --config-file" — the caller already did."""
+    config_file = tmp_path / "empty.json"
+    config_file.write_text("{}")
+    result, client = _run(["connections", "update", "conn_1", "--config-file", str(config_file)])
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "has none of" in body["error"]["message"]
+    assert "config, secrets, snapshot_config" in body["error"]["message"]
+    # Circular hint: "Pass --config-file" when they already passed it.
+    assert "Pass --name" not in body["fix"]
+    client.request.assert_not_called()
+
+
+def test_config_file_shape_hint_includes_snapshot_config(tmp_path: Path) -> None:
+    """snapshot_config is rejected-not-dropped; the discoverable hint must name it."""
+    config_file = tmp_path / "bad.json"
+    config_file.write_text(json.dumps(["not", "an", "object"]))
+    result, _ = _run(
+        ["connections", "create", "--name", "n", "--type", "T", "--config-file", str(config_file)]
+    )
+    assert result.exit_code != 0
+    fix = json.loads(result.stdout)["fix"]
+    assert "snapshot_config" in fix
+
+
 def test_attach_datasets_hint_names_datasets_shape(tmp_path: Path) -> None:
     """The shared loader must report the caller's shape, not a fixed one."""
     spec_file = tmp_path / "datasets.json"

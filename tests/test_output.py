@@ -50,16 +50,23 @@ def test_invalid_request_emits_envelope_and_exits(capsys):
     assert body["fix"] == "do this instead"
 
 
-def test_resource_modules_do_not_redefine_invalid_request():
-    """Guard against a third copy: connections and schedules each had a byte-identical
-    private _invalid before it moved here."""
+@pytest.mark.parametrize(
+    ("private_def", "shared_from"),
+    [
+        ("def _invalid(", "invalid_request from sum_cli.output"),
+        ("def _load_json_object(", "load_json_object from sum_cli.commands"),
+    ],
+)
+def test_resource_modules_do_not_redefine_shared_helpers(private_def, shared_from):
+    """connections and schedules each carried a byte-identical private copy of both
+    helpers. Guard the pattern, not just the two instances that were removed."""
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1] / "sum_cli"
     offenders = [
-        str(p.relative_to(root)) for p in root.rglob("*.py") if "def _invalid(" in p.read_text()
+        str(p.relative_to(root)) for p in root.rglob("*.py") if private_def in p.read_text()
     ]
-    assert not offenders, f"Import invalid_request from sum_cli.output instead: {offenders}"
+    assert not offenders, f"Import {shared_from} instead: {offenders}"
 
 
 def test_truncate_list():
