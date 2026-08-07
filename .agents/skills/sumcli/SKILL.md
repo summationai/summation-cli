@@ -181,11 +181,12 @@ sumcli connections test "$CONN"  # re-test: rotation does not verify the new cre
 ```
 
 `update` takes the same three top-level keys as `create` (`config`, `secrets`,
-`snapshot_config`) and sends **only the keys the file contains** — anything omitted
-is left unchanged, so a secrets-only file does not disturb `config`. One exception
-to watch: a present `snapshot_config` *replaces* the stored policy rather than
-merging into it. Use `--name` / `--description` for those two fields; they are
-rejected inside the file.
+`snapshot_config`) and sends **only the top-level keys the file contains** — an
+omitted top-level key is left unchanged, so a secrets-only file does not disturb
+`config`. Each key you *do* send replaces that stored object entirely: include the
+full `config` or `secrets`, not a partial one. Same for `snapshot_config` (the
+spec calls that out explicitly). Use `--name` / `--description` for those two
+fields; they are rejected inside the file.
 
 Removing a connection:
 

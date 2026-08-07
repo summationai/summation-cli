@@ -40,7 +40,9 @@ def _config_file_body(path: Path, *, flag_hint: str) -> dict:
     fail as a server 422 the caller has to decode.
     """
     extra = load_json_object(
-        path, "--config-file", shape_hint='{"config": {...}, "secrets": {...}}'
+        path,
+        "--config-file",
+        shape_hint='{"config": {...}, "secrets": {...}, "snapshot_config": {...}}',
     )
     unknown = sorted(set(extra) - set(_CONFIG_FILE_KEYS))
     if unknown:
@@ -111,8 +113,9 @@ def create_connection(
         extra = _config_file_body(
             config_file, flag_hint="set name, type, and description with their flags."
         )
-        # Assign, never setdefault: the file is the caller's explicit input and must
-        # win over anything already on the payload.
+        # POST always needs config/secrets objects; default absent keys to {}. That is
+        # the create/update split: update (below) forwards only keys present in the
+        # file, because PATCH leaves omitted fields unchanged.
         payload["config"] = extra.get("config", {})
         payload["secrets"] = extra.get("secrets", {})
         if "snapshot_config" in extra:
@@ -135,8 +138,10 @@ def update_connection(
         typer.Option(
             "--config-file",
             help="JSON object with any of: config, secrets, snapshot_config. Use to rotate "
-            "secrets or change settings. Only the keys present in the file are sent; "
-            "omitted keys are left unchanged. Unknown top-level keys are rejected.",
+            "secrets or change settings. Only top-level keys present in the file are "
+            "sent; omitted top-level keys are left unchanged. Each key you send replaces "
+            "the stored object entirely — include the full config/secrets, not a "
+            "partial one. Unknown top-level keys are rejected.",
         ),
     ] = None,
     profile: ProfileOption = None,
@@ -151,17 +156,22 @@ def update_connection(
             config_file, flag_hint="set name and description with their flags."
         )
         # PATCH leaves omitted fields unchanged, so forward only the keys the file
-        # actually has — never create's `.get(key, {})` default. For snapshot_config
-        # that is load-bearing: the spec says a present value replaces the stored
-        # policy, and the server does accept an empty object, so defaulting it would
-        # erase the policy on a secrets-only rotation. (Empty config/secrets happen to
-        # be no-ops server-side today, but the contract does not promise that.)
+        # actually has — never create's `.get(key, {})` default. A present key
+        # replaces that stored object wholesale (PATCH contract: fields omitted from
+        # the body are left unchanged; a present field is the new value). For
+        # snapshot_config that is load-bearing and explicit in the spec: defaulting
+        # it would erase the policy on a secrets-only rotation.
         for key in _CONFIG_FILE_KEYS:
             if key in extra:
                 payload[key] = extra[key]
     if not payload:
         # PATCH with {} succeeds server-side and changes nothing. Exiting 0 on a
         # no-op reads as "updated", so reject rather than report a false success.
+        if config_file is not None:
+            invalid_request(
+                f"--config-file {config_file} has none of: {', '.join(_CONFIG_FILE_KEYS)}.",
+                'Use e.g. {"secrets": {"password": "..."}} — an empty object changes nothing.',
+            )
         invalid_request(
             "No changes given to `connections update`.",
             "Pass --name, --description, or --config-file.",
