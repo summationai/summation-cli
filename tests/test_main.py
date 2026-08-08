@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from sum_cli import __version__
-from sum_cli.cli.main import app, main
+from sum_cli.cli.main import _api_error_fields, _api_error_guidance, app, main
 from sum_cli.client import ApiError
 from sum_cli.output import get_output_mode, set_output_mode
 
@@ -121,6 +121,106 @@ def test_version_flag() -> None:
     body = json.loads(result.stdout)
     assert body["ok"] is True
     assert body["result"]["version"] == __version__
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        # FastAPI 422: detail is a LIST, not a string. This crashed _api_error_guidance
+        # with AttributeError: 'list' object has no attribute 'casefold'.
+        (
+            {"detail": [{"type": "missing", "loc": ["body", "datasets"], "msg": "Field required"}]},
+            "datasets: Field required",
+        ),
+        (
+            {
+                "detail": [
+                    {"loc": ["body", "name"], "msg": "Field required"},
+                    {"loc": ["body", "limit"], "msg": "Input should be less than 50"},
+                ]
+            },
+            "name: Field required; limit: Input should be less than 50",
+        ),
+        # loc with a single element has no field path to report.
+        ({"detail": [{"loc": ["body"], "msg": "Invalid payload"}]}, "Invalid payload"),
+        # Ordinary sum-api errors keep their message verbatim.
+        (
+            {"error": {"code": "not_found", "message": "App connection was not found."}},
+            "App connection was not found.",
+        ),
+        ({"detail": "Something broke"}, "Something broke"),
+    ],
+    ids=["422-single", "422-multi", "422-no-field", "sum-api-error", "detail-string"],
+)
+def test_api_error_fields_always_returns_strings(body: object, expected: str) -> None:
+    code, message = _api_error_fields(body)
+    assert isinstance(code, str)
+    assert isinstance(message, str)
+    assert message == expected
+    # Guidance matches on both fields; a non-string would raise here.
+    fix, next_actions = _api_error_guidance(status=422, code=code, message=message)
+    assert isinstance(fix, str) and fix
+    # Every guidance branch offers recovery actions; losing them would strand the user.
+    assert isinstance(next_actions, list) and next_actions
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"code": 123, "message": "x"}},
+        {"error": {"message": {"nested": "obj"}}},
+        {"detail": []},
+        {"error": {"message": None, "code": "c"}},
+        [1, 2, 3],
+        "plain text error",
+        None,
+    ],
+    ids=[
+        "int-code",
+        "dict-message",
+        "empty-list",
+        "none-message",
+        "list-body",
+        "str-body",
+        "none-body",
+    ],
+)
+def test_api_error_fields_coerces_unexpected_shapes(body: object) -> None:
+    """No API response shape may crash the error path — it is the last line of defence."""
+    code, message = _api_error_fields(body)
+    assert isinstance(code, str) and code
+    assert isinstance(message, str) and message
+    fix, next_actions = _api_error_guidance(status=500, code=code, message=message)
+    assert isinstance(fix, str) and fix
+    assert isinstance(next_actions, list) and next_actions
+
+
+def test_validation_error_emits_envelope_not_traceback(monkeypatch) -> None:
+    """A 422 must produce a JSON error envelope, not a raw Python traceback."""
+    mock_client = MagicMock()
+    mock_client.request.side_effect = ApiError(
+        422,
+        {"detail": [{"type": "missing", "loc": ["body", "datasets"], "msg": "Field required"}]},
+    )
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_client
+    mock_cm.__exit__.return_value = None
+
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setattr(sys, "argv", ["sumcli", "projects", "list"])
+
+    buf = io.StringIO()
+    with patch("sum_cli.resources.projects.api_client", return_value=mock_cm):
+        with redirect_stdout(buf):
+            with pytest.raises(SystemExit) as exc:
+                main()
+    assert exc.value.code == 1
+    body = json.loads(buf.getvalue())
+    assert body["ok"] is False
+    assert body["error"]["message"] == "datasets: Field required"
+    assert body["fix"]
+    assert body["next_actions"]
 
 
 def test_api_error_envelope(monkeypatch) -> None:
