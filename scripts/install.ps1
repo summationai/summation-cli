@@ -3,9 +3,10 @@
 #   irm https://install.summation.com/sumcli.ps1 | iex
 # Optional:
 #   $env:SUMCLI_VERSION = "X.Y.Z"; irm https://install.summation.com/sumcli.ps1 | iex
+#   $env:SUMCLI_PACKAGE = "C:\path\to\checkout"  # install from a local path (tests / dev)
 $ErrorActionPreference = "Stop"
 
-$Package = "summation-cli"
+$Package = if ($env:SUMCLI_PACKAGE) { $env:SUMCLI_PACKAGE } else { "summation-cli" }
 $BinName = "sumcli"
 
 function Write-Say([string]$Message) { Write-Host $Message }
@@ -39,23 +40,65 @@ function Ensure-Uv {
 }
 
 function Install-Sumcli {
+  # --force reinstalls so a corrupt or stale tool venv is repaired instead of
+  # silently no-op'ing with "already installed".
   if ($env:SUMCLI_VERSION) {
     Write-Say "Installing ${Package}==$($env:SUMCLI_VERSION)"
-    uv tool install "${Package}==$($env:SUMCLI_VERSION)"
+    uv tool install --force "${Package}==$($env:SUMCLI_VERSION)"
   } else {
     Write-Say "Installing ${Package} (latest)"
-    uv tool install $Package
+    uv tool install --force $Package
+  }
+}
+
+function Test-SameBin([string]$A, [string]$B) {
+  if ($A -eq $B) { return $true }
+  $aItem = Get-Item -LiteralPath $A -ErrorAction SilentlyContinue
+  $bItem = Get-Item -LiteralPath $B -ErrorAction SilentlyContinue
+  if ($null -eq $aItem -or $null -eq $bItem) { return $false }
+  return $aItem.FullName -eq $bItem.FullName -or (
+    $aItem.LinkType -and $bItem.LinkType -and $aItem.Target -eq $bItem.Target
+  )
+}
+
+function Verify-Sumcli {
+  $binDir = (uv tool dir --bin 2>$null)
+  if (-not $binDir) {
+    $binDir = Join-Path $env:USERPROFILE ".local\bin"
+  }
+  $installed = Join-Path $binDir $BinName
+  $installedExe = "$installed.exe"
+  if (Test-Path -LiteralPath $installedExe) {
+    $installed = $installedExe
+  }
+
+  if (-not (Test-Path -LiteralPath $installed)) {
+    Write-Err "install finished but $installed is missing"
+  }
+
+  # Verify the binary we just installed, not whatever PATH resolves to.
+  & $installed --version
+  if ($LASTEXITCODE -ne 0) {
+    Write-Err "$installed is installed but fails to run"
+  }
+
+  Write-Say "Installed. Try: $BinName --version"
+
+  $resolvedCmd = Get-Command $BinName -ErrorAction SilentlyContinue
+  if (-not $resolvedCmd) {
+    Write-Err "'$BinName' is not on your PATH. Add $binDir to PATH, then open a new shell."
+  }
+  $resolved = $resolvedCmd.Source
+  if (-not (Test-SameBin $resolved $installed)) {
+    Write-Err @"
+another '$BinName' comes first on your PATH:
+  $resolved   <- your shell uses this one
+  $installed   <- the one just installed
+Remove the first program, or put $binDir earlier on PATH.
+"@
   }
 }
 
 Ensure-Uv
 Install-Sumcli
-
-if (Get-Command $BinName -ErrorAction SilentlyContinue) {
-  Write-Say "Installed. Try: $BinName --version"
-  & $BinName --version
-} else {
-  Write-Say "Installed $Package."
-  Write-Say "If '$BinName' is not found, ensure uv's tool bin dir is on PATH."
-  Write-Say "Upgrade later with: uv tool upgrade $Package"
-}
+Verify-Sumcli

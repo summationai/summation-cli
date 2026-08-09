@@ -30,3 +30,6 @@ jobs:
         run: >
           uv run --with pytest --with httpx --with typer --with click
           python -m pytest -q
+
+      - name: Run installer integration tests
+        run: sh tests/test_install.sh
