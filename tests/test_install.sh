@@ -41,6 +41,8 @@ setup_isolated_env() {
   export XDG_CONFIG_HOME="${TEST_HOME}/.config"
   export XDG_CACHE_HOME="${TEST_HOME}/.cache"
   export XDG_BIN_HOME="${TEST_HOME}/.local/bin"
+  export UV_TOOL_DIR="${XDG_DATA_HOME}/uv/tools"
+  export UV_TOOL_BIN_DIR="${XDG_BIN_HOME}"
   mkdir -p "${XDG_BIN_HOME}"
   # Isolated bin dir FIRST so a host ~/.local/bin/sumcli cannot shadow the
   # install under test. Keep the real uv available after that.
