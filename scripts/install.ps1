@@ -88,7 +88,11 @@ function Verify-Sumcli {
   }
 
   # Verify the binary we just installed, not whatever PATH resolves to.
-  & $installed --version
+  try {
+    & $installed --version
+  } catch {
+    Write-Err "$installed is installed but fails to run: $($_.Exception.Message)"
+  }
   if ($LASTEXITCODE -ne 0) {
     Write-Err "$installed is installed but fails to run"
   }
