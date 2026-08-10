@@ -57,13 +57,10 @@ install_sumcli() {
 }
 
 same_bin() {
-  # True if both paths resolve to the same executable (string match or same symlink target).
-  a="$1"
-  b="$2"
-  [ "${a}" = "${b}" ] && return 0
-  a_target="$(readlink "${a}" 2>/dev/null || true)"
-  b_target="$(readlink "${b}" 2>/dev/null || true)"
-  [ -n "${a_target}" ] && [ "${a_target}" = "${b_target}" ]
+  # True if both paths are the same executable (string match or same device+inode).
+  # test -ef follows symlinks, so a PATH entry that links to the uv shim counts as a match.
+  [ "$1" = "$2" ] && return 0
+  [ "$1" -ef "$2" ]
 }
 
 verify_sumcli() {

@@ -49,16 +49,27 @@ function Install-Sumcli {
     Write-Say "Installing ${Package} (latest)"
     uv tool install --force $Package
   }
+  if ($LASTEXITCODE -ne 0) {
+    Write-Err "uv tool install failed (exit $LASTEXITCODE)"
+  }
+}
+
+function Resolve-Real([string]$P) {
+  $i = Get-Item -LiteralPath $P -ErrorAction SilentlyContinue
+  if ($null -eq $i) { return $null }
+  # ResolvedTarget follows the full reparse/symlink chain when available.
+  if ($i.LinkType -and $i.ResolvedTarget) {
+    $resolved = Get-Item -LiteralPath $i.ResolvedTarget -ErrorAction SilentlyContinue
+    if ($null -ne $resolved) { return $resolved.FullName }
+  }
+  return $i.FullName
 }
 
 function Test-SameBin([string]$A, [string]$B) {
   if ($A -eq $B) { return $true }
-  $aItem = Get-Item -LiteralPath $A -ErrorAction SilentlyContinue
-  $bItem = Get-Item -LiteralPath $B -ErrorAction SilentlyContinue
-  if ($null -eq $aItem -or $null -eq $bItem) { return $false }
-  return $aItem.FullName -eq $bItem.FullName -or (
-    $aItem.LinkType -and $bItem.LinkType -and $aItem.Target -eq $bItem.Target
-  )
+  $ra = Resolve-Real $A
+  $rb = Resolve-Real $B
+  return ($null -ne $ra -and $null -ne $rb -and $ra -eq $rb)
 }
 
 function Verify-Sumcli {

@@ -18,8 +18,11 @@ TEST_HOME=""
 assert_ok() {
   name="$1"
   shift
+  # Run the body in a subshell with errexit so the first failing assertion
+  # aborts only that test. Keep the subshell *outside* `if` — macOS sh
+  # suppresses set -e inside if-conditions, including nested subshells.
   set +e
-  "$@"
+  ( set -e; "$@" )
   status=$?
   set -e
   if [ "${status}" -eq 0 ]; then
@@ -42,6 +45,8 @@ setup_isolated_env() {
   # Isolated bin dir FIRST so a host ~/.local/bin/sumcli cannot shadow the
   # install under test. Keep the real uv available after that.
   export PATH="${XDG_BIN_HOME}:${UV_DIR}:/usr/bin:/bin:/usr/sbin:/sbin"
+  # Cleanup must run in this subshell (TEST_HOME is not visible to the parent).
+  trap teardown_isolated_env EXIT
 }
 
 teardown_isolated_env() {
@@ -58,7 +63,6 @@ run_clean_install() {
   installed="$(uv tool dir --bin)/sumcli"
   [ "${resolved}" = "${installed}" ]
   sumcli --version >/dev/null
-  teardown_isolated_env
 }
 
 run_shadow_detected() {
@@ -86,8 +90,10 @@ run_shadow_detected() {
   [ -x "${installed}" ] || ok=0
   "${installed}" --version >/dev/null || ok=0
 
+  if [ "${ok}" -ne 1 ]; then
+    sed 's/^/  | /' "${out}" >&2 || true
+  fi
   rm -f "${out}"
-  teardown_isolated_env
   [ "${ok}" -eq 1 ]
 }
 
@@ -108,8 +114,6 @@ run_repair_corrupt_venv() {
   # Without --force this would no-op; with --force it must repair.
   SUMCLI_PACKAGE="${REPO_ROOT}" sh "${INSTALLER}"
   sumcli --version >/dev/null
-
-  teardown_isolated_env
 }
 
 assert_ok "clean install" run_clean_install
