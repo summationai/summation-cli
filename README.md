@@ -74,18 +74,35 @@ uv tool install .
 # or: uv pip install -e .
 ```
 
-**Releases are manual.** There is no CI publish workflow — use `./scripts/publish.sh` when ready.
+**Releases are tag-driven.** `main` is the next unreleased line of development.
+Merging without a version bump does not publish anything. To ship:
+
+1. Bump `__version__` in `sum_cli/__init__.py` (and merge that to `main`).
+2. Tag the release commit and push the tag:
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+3. `.github/workflows/release.yml` re-runs tests, checks the tag matches
+   `__version__`, builds, publishes to PyPI via Trusted Publishing (OIDC),
+   and creates a GitHub Release with the wheel/sdist.
+
+One-time setup: add a PyPI Trusted Publisher for this repo
+(`workflow: release.yml`, `environment: pypi`) and create a GitHub Environment
+named `pypi` (optional required reviewers).
+
+Local/emergency publishes (and TestPyPI dry runs) still work with
+`./scripts/publish.sh`:
 
 ```bash
 export UV_PUBLISH_PASSWORD_TEST='pypi-...'   # TestPyPI
-export UV_PUBLISH_PASSWORD='pypi-...'        # production
+export UV_PUBLISH_PASSWORD='pypi-...'        # production (prefer CI)
 
 ./scripts/publish.sh                # TestPyPI
 ./scripts/publish.sh --production    # real PyPI (type the version to confirm)
 ```
 
-A published version is permanent and can never be replaced, so bump
-`sum_cli/__init__.py` before re-publishing.
+A published version is permanent and can never be replaced.
 
 ## Quickstart
 

@@ -1,0 +1,120 @@
+# Publish summation-cli to PyPI from an explicit version tag.
+#
+# Release flow:
+#   1. Bump __version__ in sum_cli/__init__.py and merge to main
+#   2. Tag that commit: git tag vX.Y.Z && git push origin vX.Y.Z
+#   3. This workflow tests, builds, publishes (OIDC), and creates a GitHub Release
+#
+# One-time setup (PyPI Trusted Publisher):
+#   Owner: summationai  Repo: summation-cli
+#   Workflow: release.yml  Environment: pypi
+# Then create a GitHub Environment named "pypi" (optional required reviewers).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Verify tag matches package version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "${tag}" in
+            v[0-9]*) expected="${tag#v}" ;;
+            *)
+              echo "Tag must look like vX.Y.Z (got '${tag}')" >&2
+              exit 1
+              ;;
+          esac
+          version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' sum_cli/__init__.py)"
+          if [ -z "${version}" ]; then
+            echo "Could not read __version__ from sum_cli/__init__.py" >&2
+            exit 1
+          fi
+          if [ "${version}" != "${expected}" ]; then
+            echo "Version mismatch: sum_cli/__init__.py=${version} tag=${tag} (expected v${version})" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Publishing summation-cli ${version}"
+
+      - name: Run unit tests
+        run: >
+          uv run --with pytest --with httpx --with typer --with click
+          python -m pytest -q
+
+      - name: Run installer integration tests
+        run: |
+          sh tests/test_install.sh
+          cmp scripts/install.sh docs/sumcli
+          cmp scripts/install.ps1 docs/sumcli.ps1
+
+      - name: Build sdist and wheel
+        run: |
+          rm -rf dist
+          uv build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/summation-cli/${{ needs.test-and-build.outputs.version }}/
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC)
+      contents: write # create GitHub Release + attach artifacts
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Publish to PyPI
+        # --check-url makes re-runs idempotent: files already on PyPI are skipped
+        # instead of failing, so a later GitHub Release failure can be retried.
+        run: >
+          uv publish --trusted-publishing always
+          --check-url https://pypi.org/simple/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: v${{ needs.test-and-build.outputs.version }}
+          generate_release_notes: true
+          files: dist/*
