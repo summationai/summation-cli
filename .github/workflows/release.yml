@@ -8,9 +8,9 @@
 # A tag alone is not enough to publish: the tagged commit must also be an
 # ancestor of origin/main, so a tag on an unmerged branch fails the gate.
 #
-# Third-party actions are pinned by commit SHA. Only the publish job can mint
-# the OIDC token that publishes as summation-cli, so a hijacked upstream tag
-# must not be able to inject code into it. Update pins deliberately.
+# The publish job holds id-token: write. Third-party actions there are
+# SHA-pinned; the GitHub Release is created with `gh` (preinstalled) so no
+# third-party action runs after the OIDC token is minted.
 #
 # One-time setup (PyPI Trusted Publisher):
 #   Owner: summationai  Repo: summation-cli
@@ -37,13 +37,13 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
         with:
           # Need history for the merge-base ancestry check below.
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
@@ -98,7 +98,7 @@ jobs:
           uv build
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
@@ -131,9 +131,14 @@ jobs:
           --check-url https://pypi.org/simple/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: v${{ needs.test-and-build.outputs.version }}
-          generate_release_notes: true
-          files: dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          title="v${{ needs.test-and-build.outputs.version }}"
+          # Upsert so a retry after a successful create does not fail.
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/* --clobber
+          else
+            gh release create "${tag}" --title "${title}" --generate-notes dist/*
+          fi
