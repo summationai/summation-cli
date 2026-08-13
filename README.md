@@ -87,9 +87,14 @@ Merging without a version bump does not publish anything. To ship:
    `__version__`, builds, publishes to PyPI via Trusted Publishing (OIDC),
    and creates a GitHub Release with the wheel/sdist.
 
+The tagged commit must be on `main`. A `v*` tag can point at any commit, so the
+workflow also checks that the commit is an ancestor of `origin/main` and fails
+if it is not. Tag after the version bump merges, not before.
+
 One-time setup: add a PyPI Trusted Publisher for this repo
 (`workflow: release.yml`, `environment: pypi`) and create a GitHub Environment
-named `pypi` (optional required reviewers).
+named `pypi`. Add required reviewers to that environment — the approval is the
+last human gate before a publish.
 
 Local/emergency publishes (and TestPyPI dry runs) still work with
 `./scripts/publish.sh`:
