@@ -43,6 +43,7 @@ from sum_cli.resources import (
     tenant,
     views,
 )
+from sum_cli.update_check import run_upgrade, warn_if_outdated
 
 
 @dataclass
@@ -97,6 +98,7 @@ def _output_callback(value: OutputChoice | None) -> OutputChoice | None:
 
 def _version_callback(value: bool) -> None:
     if value:
+        warn_if_outdated()
         emit(
             {
                 "ok": True,
@@ -206,6 +208,8 @@ def _root(
     # runs, so the mode is already set here; nothing more to do with it.
     del output
     ctx.obj = CliContext(profile=profile, base_url=base_url, verbose=verbose)
+    if ctx.invoked_subcommand != "update":
+        warn_if_outdated()
     if ctx.invoked_subcommand is None:
         try:
             emit(build_command_tree_envelope())
@@ -219,6 +223,12 @@ def _root(
                 )
             )
         raise typer.Exit()
+
+
+@app.command("update")
+def update_cli() -> None:
+    """Upgrade sumcli to the latest PyPI release via uv."""
+    run_upgrade()
 
 
 def main() -> None:

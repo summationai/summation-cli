@@ -22,6 +22,7 @@ uv tool install summation-cli
 # or from this repo (editable):
 uv tool install .
 curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
+sumcli update   # later upgrades (uv tool upgrade summation-cli)
 ```
 
 ## Agent rules
@@ -41,6 +42,7 @@ curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
 
 ```text
 sumcli [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
+sumcli update    # root command: upgrade to the latest PyPI release
 ```
 
 Project-scoped commands accept `--project` when no default is set.
@@ -398,7 +400,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`.
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_NO_UPDATE_CHECK`.
 
 ## More detail
 

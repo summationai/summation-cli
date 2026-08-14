@@ -31,8 +31,11 @@ Then:
 
 ```bash
 sumcli --help
-uv tool upgrade summation-cli   # later upgrades
+sumcli update                   # upgrade to the latest PyPI release
 ```
+
+A stderr notice (at most once a day) appears when a newer version is on PyPI.
+Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
 
 ## Resources
 

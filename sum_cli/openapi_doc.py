@@ -751,6 +751,7 @@ def build_command_tree_envelope() -> dict:
             "resources": build_resources(),
         },
         next_actions=[
+            action("Upgrade sumcli", "sumcli update"),
             action("Show active identity", "sumcli auth whoami"),
             action("List profiles", "sumcli config list"),
             action(

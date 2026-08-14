@@ -31,8 +31,11 @@ Then:
 
 ```bash
 sumcli --help
-uv tool upgrade summation-cli   # later upgrades
+sumcli update                   # upgrade to the latest PyPI release
 ```
+
+Commands print a stderr notice (at most once a day) when a newer PyPI version exists.
+Stdout is unchanged, so JSON/`jq` still parse. Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
 
 **curl bootstrap** (installs uv if needed, then `uv tool install summation-cli`):
 
