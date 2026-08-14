@@ -1,0 +1,144 @@
+# Publish summation-cli to PyPI from an explicit version tag.
+#
+# Release flow:
+#   1. Bump __version__ in sum_cli/__init__.py and merge to main
+#   2. Tag that commit: git tag vX.Y.Z && git push origin vX.Y.Z
+#   3. This workflow tests, builds, publishes (OIDC), and creates a GitHub Release
+#
+# A tag alone is not enough to publish: the tagged commit must also be an
+# ancestor of origin/main, so a tag on an unmerged branch fails the gate.
+#
+# The publish job holds id-token: write. Third-party actions there are
+# SHA-pinned; the GitHub Release is created with `gh` (preinstalled) so no
+# third-party action runs after the OIDC token is minted.
+#
+# One-time setup (PyPI Trusted Publisher):
+#   Owner: summationai  Repo: summation-cli
+#   Workflow: release.yml  Environment: pypi
+# Then create a GitHub Environment named "pypi" and add required reviewers —
+# that approval is the last human gate before a publish.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need history for the merge-base ancestry check below.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Verify tag matches package version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "${tag}" in
+            v[0-9]*) expected="${tag#v}" ;;
+            *)
+              echo "Tag must look like vX.Y.Z (got '${tag}')" >&2
+              exit 1
+              ;;
+          esac
+          # A v* tag can point at any commit, including one never merged.
+          # Only release commits that are on main.
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Tag ${tag} points at ${GITHUB_SHA}, which is not an ancestor of origin/main." >&2
+            echo "Merge the release commit to main before tagging." >&2
+            exit 1
+          fi
+          version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' sum_cli/__init__.py)"
+          if [ -z "${version}" ]; then
+            echo "Could not read __version__ from sum_cli/__init__.py" >&2
+            exit 1
+          fi
+          if [ "${version}" != "${expected}" ]; then
+            echo "Version mismatch: sum_cli/__init__.py=${version} tag=${tag} (expected v${version})" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Publishing summation-cli ${version}"
+
+      - name: Run unit tests
+        run: >
+          uv run --with pytest --with httpx --with typer --with click
+          python -m pytest -q
+
+      - name: Run installer integration tests
+        run: |
+          sh tests/test_install.sh
+          cmp scripts/install.sh docs/sumcli
+          cmp scripts/install.ps1 docs/sumcli.ps1
+
+      - name: Build sdist and wheel
+        run: |
+          rm -rf dist
+          uv build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/summation-cli/${{ needs.test-and-build.outputs.version }}/
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC)
+      contents: write # create GitHub Release + attach artifacts
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Publish to PyPI
+        # --check-url makes re-runs idempotent: files already on PyPI are skipped
+        # instead of failing, so a later GitHub Release failure can be retried.
+        run: >
+          uv publish --trusted-publishing always
+          --check-url https://pypi.org/simple/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          title="v${{ needs.test-and-build.outputs.version }}"
+          # Upsert so a retry after a successful create does not fail.
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/* --clobber
+          else
+            gh release create "${tag}" --title "${title}" --generate-notes dist/*
+          fi
