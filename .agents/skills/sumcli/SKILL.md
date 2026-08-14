@@ -22,7 +22,7 @@ uv tool install summation-cli
 # or from this repo (editable):
 uv tool install .
 curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
-sumcli update   # later upgrades (uv tool upgrade summation-cli)
+sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
 ```
 
 ## Agent rules

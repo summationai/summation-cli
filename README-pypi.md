@@ -34,7 +34,8 @@ sumcli --help
 sumcli update                   # upgrade to the latest PyPI release
 ```
 
-A stderr notice (at most once a day) appears when a newer version is on PyPI.
+A stderr notice appears when a newer version is on PyPI. Lookups are cached
+(a day on success, 15 minutes after a failed fetch).
 Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
 
 ## Resources

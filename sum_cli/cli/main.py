@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import httpx
 import typer
 
 from sum_cli import __version__, debug_log
@@ -227,7 +228,7 @@ def _root(
 
 @app.command("update")
 def update_cli() -> None:
-    """Upgrade sumcli to the latest PyPI release via uv."""
+    """Install the latest PyPI release of sumcli, including over a version pin."""
     run_upgrade()
 
 
@@ -261,6 +262,18 @@ def main() -> None:
         if e.method and e.url:
             debug_log.log_api_error(e.status, e.body, method=e.method, url=e.url)
         emit_error(_api_error_envelope(e))
+    except httpx.HTTPError as e:
+        emit_error(
+            err(
+                "NETWORK_ERROR",
+                str(e),
+                "Check that you are online and that the profile base URL is reachable.",
+                next_actions=[
+                    action("Show config", "sumcli config active"),
+                    action("Show version", "sumcli --version"),
+                ],
+            )
+        )
     except Exception as e:
         emit_error(
             err(

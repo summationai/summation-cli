@@ -2,7 +2,7 @@
 
 The check never writes to stdout (JSON envelopes stay parseable). Failures are
 swallowed. Results are cached next to the config file so a cold PyPI lookup
-happens at most once per TTL.
+happens at most once per TTL (shorter on fetch failure).
 """
 
 from __future__ import annotations
@@ -12,9 +12,12 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+from typing import NoReturn
 
+import click
 import httpx
 
 from sum_cli import __version__, debug_log
@@ -25,8 +28,11 @@ PACKAGE = "summation-cli"
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 CACHE_NAME = "update-check.json"
 TTL_SECONDS = 24 * 60 * 60
+FAILURE_TTL_SECONDS = 15 * 60
 FETCH_TIMEOUT = 0.4
+UV_INSTALL = ["tool", "install", "--force", f"{PACKAGE}@latest"]
 _TRUTHY = frozenset({"1", "true", "yes"})
+_BOOTSTRAP = "curl -fsSL https://install.summation.com/sumcli | sh"
 
 
 def cache_path() -> Path:
@@ -49,7 +55,10 @@ def reset_state() -> None:
 def _skip_this_invocation() -> bool:
     if _env_disabled():
         return True
-    return any(tok in {"-h", "--help"} for tok in sys.argv[1:])
+    # Click sets resilient_parsing while generating --help. Do not scan argv:
+    # `-m --help` is a legitimate option value (see chats/reports --message).
+    ctx = click.get_current_context(silent=True)
+    return bool(ctx is not None and getattr(ctx, "resilient_parsing", False))
 
 
 def _parse_version(value: str) -> tuple[int, ...] | None:
@@ -74,18 +83,43 @@ def _read_cache(path: Path) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
-    latest = data.get("latest")
-    checked_at = data.get("checked_at")
-    if not isinstance(latest, str) or not isinstance(checked_at, (int, float)):
+    if "latest" not in data:
         return None
-    return {"latest": latest, "checked_at": float(checked_at)}
+    latest = data["latest"]
+    if latest is not None and not isinstance(latest, str):
+        return None
+    checked_at = data.get("checked_at")
+    if not isinstance(checked_at, (int, float)):
+        return None
+    ok_flag = data.get("ok")
+    if not isinstance(ok_flag, bool):
+        ok_flag = latest is not None
+    return {"latest": latest, "checked_at": float(checked_at), "ok": ok_flag}
 
 
-def _write_cache(path: Path, latest: str, checked_at: float | None = None) -> None:
+def _write_cache(
+    path: Path,
+    latest: str | None,
+    checked_at: float | None = None,
+    *,
+    ok: bool = True,
+) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         checked = time.time() if checked_at is None else checked_at
-        path.write_text(json.dumps({"latest": latest, "checked_at": checked}))
+        payload = json.dumps({"latest": latest, "checked_at": checked, "ok": ok})
+        fd, tmp_name = tempfile.mkstemp(
+            prefix="update-check.", suffix=".tmp", dir=str(path.parent)
+        )
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(payload)
+            os.replace(tmp_name, path)
+        except OSError:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
     except OSError:
         pass
 
@@ -114,12 +148,16 @@ def resolve_latest(*, now: float | None = None) -> str | None:
     path = cache_path()
     cached = _read_cache(path)
     stamp = time.time() if now is None else now
-    if cached is not None and stamp - cached["checked_at"] < TTL_SECONDS:
-        return cached["latest"]
+    if cached is not None:
+        ttl = TTL_SECONDS if cached["ok"] else FAILURE_TTL_SECONDS
+        if stamp - cached["checked_at"] < ttl:
+            return cached["latest"]
     latest = _fetch_latest()
     if latest is None:
-        return cached["latest"] if cached is not None else None
-    _write_cache(path, latest, stamp)
+        previous = cached["latest"] if cached is not None else None
+        _write_cache(path, previous, stamp, ok=False)
+        return previous
+    _write_cache(path, latest, stamp, ok=True)
     return latest
 
 
@@ -141,37 +179,60 @@ def warn_if_outdated(*, current: str = __version__) -> None:
         debug_log.debug("update check skipped: %s", exc)
 
 
-def run_upgrade() -> None:
-    """Upgrade the uv-installed summation-cli tool to the latest PyPI release."""
-    uv = shutil.which("uv")
-    if uv is None:
-        emit_error(
-            err(
-                "UV_NOT_FOUND",
-                "uv is not on PATH, so sumcli cannot upgrade itself.",
-                "Install uv, or re-run the bootstrap installer.",
-                next_actions=[
-                    action(
-                        "Bootstrap install",
-                        "curl -fsSL https://install.summation.com/sumcli | sh",
-                    )
-                ],
+def _uv_missing(message: str) -> NoReturn:
+    emit_error(
+        err(
+            "UV_NOT_FOUND",
+            message,
+            "Install uv, or re-run the bootstrap installer.",
+            next_actions=[action("Bootstrap install", _BOOTSTRAP)],
+        )
+    )
+
+
+def run_upgrade(*, current: str = __version__) -> None:
+    """Install the latest PyPI release, including over an exact-version pin.
+
+    Re-checks PyPI (does not use the daily cache) and skips uv when ``current``
+    is already the latest known release.
+    """
+    latest = _fetch_latest()
+    if latest is not None and not _is_behind(current, latest):
+        _write_cache(cache_path(), latest, ok=True)
+        emit(
+            ok(
+                {
+                    "current_version": current,
+                    "latest": latest,
+                    "updated": False,
+                    "note": "Already the latest PyPI release.",
+                },
+                next_actions=[action("Show version", "sumcli --version")],
             )
         )
-    proc = subprocess.run(
-        [uv, "tool", "upgrade", PACKAGE],
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-        check=False,
-    )
+        return
+    uv = shutil.which("uv")
+    if uv is None:
+        _uv_missing("uv is not on PATH, so sumcli cannot upgrade itself.")
+    argv = [uv, *UV_INSTALL]
+    try:
+        proc = subprocess.run(
+            argv,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+            check=False,
+        )
+    except OSError as exc:
+        _uv_missing(f"Could not run uv: {exc}")
     if proc.returncode != 0:
+        cmd = " ".join(argv[1:])
         emit_error(
             err(
                 "UPDATE_FAILED",
-                f"uv tool upgrade {PACKAGE} exited {proc.returncode}.",
+                f"uv {cmd} exited {proc.returncode}.",
                 "Install via uv tool install summation-cli, then retry sumcli update.",
                 next_actions=[
-                    action("Install latest", f"uv tool install --force {PACKAGE}"),
+                    action("Install latest", f"uv {' '.join(UV_INSTALL)}"),
                 ],
             )
         )
@@ -182,8 +243,10 @@ def run_upgrade() -> None:
     emit(
         ok(
             {
-                "previous_version": __version__,
+                "previous_version": current,
+                "latest": latest,
                 "package": PACKAGE,
+                "updated": True,
                 "note": "Restart the shell command to pick up the new binary.",
             },
             next_actions=[action("Show version", "sumcli --version")],
