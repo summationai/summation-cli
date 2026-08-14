@@ -15,15 +15,30 @@ First-party public CLI for [sum-api](https://github.com/summationai/summation-sk
 
 ## Install
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+. Detect the user's shell and run **one** of these — do not paste `curl | sh` into PowerShell or cmd.exe.
 
 ```bash
 uv tool install summation-cli
 # or from this repo (editable):
 uv tool install .
-curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
+curl -fsSL https://install.summation.com/sumcli | sh   # macOS / Linux / Git Bash / WSL
 sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
 ```
+
+```powershell
+# Windows PowerShell / pwsh
+irm https://install.summation.com/sumcli.ps1 | iex
+sumcli update
+```
+
+```bat
+REM Windows cmd.exe — same installer, launched via PowerShell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"
+```
+
+## Plugin ↔ CLI version contract
+
+The Summation plugin requires **sumcli ≥ 0.1.3**. Taking PyPI latest is always compatible (`sumcli update`). Plugins parse `sumcli --version` (`SUMCLI_OUTPUT=json`; read `result.version`). If the binary is missing or below that floor, install with the matching bootstrap above, then `sumcli update`.
 
 ## Agent rules
 
@@ -400,7 +415,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_NO_UPDATE_CHECK`.
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_NO_AUTO_INSTALL` (plugin SessionStart opt-out).
 
 ## More detail
 
