@@ -14,9 +14,11 @@ from sum_cli import __version__
 from sum_cli.cli.main import app
 from sum_cli.update_check import (
     FAILURE_TTL_SECONDS,
+    FETCH_TIMEOUT,
     PYPI_JSON_URL,
     TTL_SECONDS,
     UV_INSTALL,
+    _is_uv_managed,
     reset_state,
     resolve_latest,
     run_upgrade,
@@ -30,6 +32,11 @@ runner = CliRunner()
 def enable_check(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SUMCLI_NO_UPDATE_CHECK", raising=False)
     reset_state()
+
+
+@pytest.fixture
+def uv_managed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sum_cli.update_check._is_uv_managed", lambda **_: True)
 
 
 def _pypi_ok(version: str) -> httpx.Response:
@@ -73,7 +80,7 @@ def test_cache_avoids_second_fetch(enable_check) -> None:
     assert mock_get.call_count == 1
     mock_get.assert_called_with(
         PYPI_JSON_URL,
-        timeout=0.4,
+        timeout=FETCH_TIMEOUT,
         headers={"User-Agent": f"sumcli/{__version__}"},
         follow_redirects=True,
     )
@@ -146,7 +153,7 @@ def test_update_skips_uv_when_already_latest(enable_check) -> None:
     assert body["result"]["latest"] == __version__
 
 
-def test_update_installs_latest_over_pins(enable_check) -> None:
+def test_update_installs_latest_over_pins(enable_check, uv_managed) -> None:
     completed = MagicMock(returncode=0)
     with (
         patch("sum_cli.update_check.httpx.get", return_value=_pypi_ok("99.0.0")),
@@ -163,7 +170,7 @@ def test_update_installs_latest_over_pins(enable_check) -> None:
     assert body["result"]["package"] == "summation-cli"
 
 
-def test_update_runs_uv_when_pypi_unreachable(enable_check) -> None:
+def test_update_runs_uv_when_pypi_unreachable(enable_check, uv_managed) -> None:
     completed = MagicMock(returncode=0)
     with (
         patch(
@@ -179,7 +186,7 @@ def test_update_runs_uv_when_pypi_unreachable(enable_check) -> None:
     assert json.loads(result.stdout)["result"]["updated"] is True
 
 
-def test_update_errors_when_uv_missing(enable_check) -> None:
+def test_update_errors_when_uv_missing(enable_check, uv_managed) -> None:
     with (
         patch("sum_cli.update_check.httpx.get", return_value=_pypi_ok("99.0.0")),
         patch("sum_cli.update_check.shutil.which", return_value=None),
@@ -190,7 +197,7 @@ def test_update_errors_when_uv_missing(enable_check) -> None:
     assert body["error"]["code"] == "UV_NOT_FOUND"
 
 
-def test_update_errors_when_uv_cannot_run(enable_check) -> None:
+def test_update_errors_when_uv_cannot_run(enable_check, uv_managed) -> None:
     with (
         patch("sum_cli.update_check.httpx.get", return_value=_pypi_ok("99.0.0")),
         patch("sum_cli.update_check.shutil.which", return_value="/nonexistent/uv"),
@@ -205,7 +212,7 @@ def test_update_errors_when_uv_cannot_run(enable_check) -> None:
     assert body["error"]["code"] == "UV_NOT_FOUND"
 
 
-def test_update_errors_when_uv_fails(enable_check) -> None:
+def test_update_errors_when_uv_fails(enable_check, uv_managed) -> None:
     completed = MagicMock(returncode=1)
     with (
         patch("sum_cli.update_check.httpx.get", return_value=_pypi_ok("99.0.0")),
@@ -218,7 +225,7 @@ def test_update_errors_when_uv_fails(enable_check) -> None:
     assert body["error"]["code"] == "UPDATE_FAILED"
 
 
-def test_run_upgrade_direct_when_uv_missing() -> None:
+def test_run_upgrade_direct_when_uv_missing(uv_managed) -> None:
     """Cover the helper without going through Typer (same envelope as the command)."""
     with (
         patch("sum_cli.update_check.httpx.get", return_value=_pypi_ok("99.0.0")),
@@ -227,3 +234,43 @@ def test_run_upgrade_direct_when_uv_missing() -> None:
     ):
         run_upgrade()
     assert exc.value.code == 1
+
+
+def test_update_errors_when_not_uv_managed(enable_check) -> None:
+    with (
+        patch("sum_cli.update_check.httpx.get", return_value=_pypi_ok("99.0.0")),
+        patch("sum_cli.update_check._is_uv_managed", return_value=False),
+        patch("sum_cli.update_check.subprocess.run") as run,
+    ):
+        result = runner.invoke(app, ["update"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "NOT_UV_MANAGED"
+    run.assert_not_called()
+
+
+def test_is_uv_managed_detects_tools_prefix() -> None:
+    uv_prefix = "/Users/x/.local/share/uv/tools/summation-cli"
+    uv_python = f"{uv_prefix}/bin/python"
+    assert _is_uv_managed(prefix=uv_prefix, executable=uv_python)
+    assert _is_uv_managed(
+        prefix=r"C:\Users\x\AppData\Roaming\uv\tools\summation-cli",
+        executable=r"C:\Users\x\AppData\Roaming\uv\tools\summation-cli\Scripts\python.exe",
+    )
+    assert not _is_uv_managed(
+        prefix="/opt/homebrew/Cellar/summation-cli/0.1.2",
+        executable="/opt/homebrew/bin/python3",
+    )
+    assert not _is_uv_managed(
+        prefix="/usr/local/lib/python3.12",
+        executable="/usr/local/bin/python3",
+    )
+
+
+def test_is_uv_managed_respects_uv_tool_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path))
+    prefix = tmp_path / "summation-cli"
+    executable = prefix / "bin" / "python"
+    assert _is_uv_managed(prefix=str(prefix), executable=str(executable))

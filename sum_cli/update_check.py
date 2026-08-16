@@ -29,7 +29,7 @@ PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 CACHE_NAME = "update-check.json"
 TTL_SECONDS = 24 * 60 * 60
 FAILURE_TTL_SECONDS = 15 * 60
-FETCH_TIMEOUT = 0.4
+FETCH_TIMEOUT = 1.0
 UV_INSTALL = ["tool", "install", "--force", f"{PACKAGE}@latest"]
 _TRUTHY = frozenset({"1", "true", "yes"})
 _BOOTSTRAP = "curl -fsSL https://install.summation.com/sumcli | sh"
@@ -55,8 +55,11 @@ def reset_state() -> None:
 def _skip_this_invocation() -> bool:
     if _env_disabled():
         return True
-    # Click sets resilient_parsing while generating --help. Do not scan argv:
-    # `-m --help` is a legitimate option value (see chats/reports --message).
+    # Click sets resilient_parsing during shell completion, not --help. An eager
+    # --help exits before the root callback; `sumcli <cmd> --help` still runs
+    # the check, which is fine. Completion must never touch the network.
+    # Do not scan argv: `-m --help` is a legitimate option value
+    # (see chats/reports --message).
     ctx = click.get_current_context(silent=True)
     return bool(ctx is not None and getattr(ctx, "resilient_parsing", False))
 
@@ -179,6 +182,53 @@ def warn_if_outdated(*, current: str = __version__) -> None:
         debug_log.debug("update check skipped: %s", exc)
 
 
+def _uv_tool_dir_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    if explicit := os.environ.get("UV_TOOL_DIR"):
+        candidates.append(Path(explicit).expanduser())
+    if xdg := os.environ.get("XDG_DATA_HOME"):
+        candidates.append(Path(xdg) / "uv" / "tools")
+    home = Path.home()
+    candidates.append(home / ".local" / "share" / "uv" / "tools")
+    if appdata := os.environ.get("APPDATA"):
+        candidates.append(Path(appdata) / "uv" / "tools")
+    if local := os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(local) / "uv" / "tools")
+    candidates.append(home / "Library" / "Application Support" / "uv" / "tools")
+    return candidates
+
+
+def _is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _looks_like_uv_tools_path(path: Path) -> bool:
+    parts = [part.lower() for part in str(path).replace("\\", "/").split("/") if part]
+    return any(
+        part == "uv" and parts[index + 1] == "tools"
+        for index, part in enumerate(parts[:-1])
+    )
+
+
+def _is_uv_managed(*, prefix: str | None = None, executable: str | None = None) -> bool:
+    """True when this process is running from a `uv tool` environment."""
+    roots = (
+        Path(sys.prefix if prefix is None else prefix),
+        Path(sys.executable if executable is None else executable),
+    )
+    tool_dirs = _uv_tool_dir_candidates()
+    for root in roots:
+        if _looks_like_uv_tools_path(root):
+            return True
+        if any(_is_under(root, tool_dir) for tool_dir in tool_dirs):
+            return True
+    return False
+
+
 def _uv_missing(message: str) -> NoReturn:
     emit_error(
         err(
@@ -190,11 +240,30 @@ def _uv_missing(message: str) -> NoReturn:
     )
 
 
+def _not_uv_managed() -> NoReturn:
+    emit_error(
+        err(
+            "NOT_UV_MANAGED",
+            "This sumcli was not installed with uv, so sumcli update would "
+            "create a second copy instead of upgrading the running binary.",
+            "Upgrade with the same installer you used, or switch to a uv-managed install.",
+            next_actions=[
+                action("Install with uv", f"uv {' '.join(UV_INSTALL)}"),
+                action("Upgrade with pip", "pip install --upgrade summation-cli"),
+                action("Upgrade with pipx", "pipx upgrade summation-cli"),
+                action("Bootstrap install", _BOOTSTRAP),
+            ],
+        )
+    )
+
+
 def run_upgrade(*, current: str = __version__) -> None:
     """Install the latest PyPI release, including over an exact-version pin.
 
     Re-checks PyPI (does not use the daily cache) and skips uv when ``current``
-    is already the latest known release.
+    is already the latest known release. Refuses to run ``uv tool install``
+    unless this process is a uv-managed tool, so pip/pipx/brew installs are
+    not shadowed by a second copy.
     """
     latest = _fetch_latest()
     if latest is not None and not _is_behind(current, latest):
@@ -211,6 +280,8 @@ def run_upgrade(*, current: str = __version__) -> None:
             )
         )
         return
+    if not _is_uv_managed():
+        _not_uv_managed()
     uv = shutil.which("uv")
     if uv is None:
         _uv_missing("uv is not on PATH, so sumcli cannot upgrade itself.")

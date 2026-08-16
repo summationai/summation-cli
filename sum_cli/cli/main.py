@@ -228,7 +228,7 @@ def _root(
 
 @app.command("update")
 def update_cli() -> None:
-    """Install the latest PyPI release of sumcli, including over a version pin."""
+    """Install the latest PyPI release of a uv-managed sumcli, including over a version pin."""
     run_upgrade()
 
 

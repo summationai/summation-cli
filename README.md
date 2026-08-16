@@ -31,12 +31,14 @@ Then:
 
 ```bash
 sumcli --help
-sumcli update                   # upgrade to the latest PyPI release
+sumcli update                   # upgrade a uv-managed install to the latest PyPI release
 ```
 
 Commands print a stderr notice when a newer PyPI version exists. Lookups are
 cached (a day on success, 15 minutes after a failed fetch). Stdout is unchanged,
 so JSON/`jq` still parse. Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
+`sumcli update` upgrades a uv-managed install only; other origins (pip, pipx,
+brew) get a targeted error instead of a second copy on PATH.
 
 **curl bootstrap** (installs uv if needed, then `uv tool install summation-cli`):
 
