@@ -398,7 +398,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`.
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
 
 ## More detail
 
