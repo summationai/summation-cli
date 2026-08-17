@@ -373,7 +373,7 @@ sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--
 
 `--intent` is the human's request **in their own words** when possible — not a summary of the command. It is required when stdout is not a TTY (agents and pipes) and is sent to sum-api as `X-Summation-Intent`. Humans at an interactive terminal may omit it. `SUMCLI_INTENT` sets the same string for a session. `--intent` is a root option and must precede the subcommand.
 
-These do not need it: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth` and `config` groups — login happens before there is a goal to state, and `config` only writes the local config file. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding.
+These do not need it: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external storage provider with that provider's credentials and never reaches sum-api. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding — so non-ASCII text gets fewer than 500 characters.
 
 Project-scoped commands accept `--project` when no default project is configured.
 

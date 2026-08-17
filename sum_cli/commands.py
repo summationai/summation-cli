@@ -12,7 +12,7 @@ import typer
 
 from sum_cli.client import Client
 from sum_cli.config import Config, load
-from sum_cli.intent import require_intent
+from sum_cli.intent import enforce_intent
 from sum_cli.output import action, emit_error, err, invalid_request, param
 from sum_cli.project_context import resolve_project
 
@@ -66,29 +66,26 @@ def get_config(ctx: typer.Context, profile: str | None = None) -> Config:
 
 
 def get_intent(ctx: typer.Context) -> str | None:
-    """Resolved intent for this invocation, enforced at the point of use.
+    """Resolved intent for this invocation. A plain getter — see ``require_intent``."""
+    return getattr(ctx.obj, "intent", None) if ctx.obj is not None else None
 
-    Enforcing here rather than in the root callback is what makes the ``--help``
-    and discovery exemptions self-executing: Click never runs a command body for
-    those, so they never reach this call.
+
+def require_intent(ctx: typer.Context) -> str | None:
+    """Enforce the intent contract, then return the value.
+
+    Called where a command actually reaches sum-api rather than from the root
+    callback. Click never runs a command body for ``--help``, so gating here makes
+    the help and discovery exemptions follow from control flow — no code has to
+    decide which argv token is a flag and which is an option value.
     """
-    intent = getattr(ctx.obj, "intent", None) if ctx.obj is not None else None
-    require_intent(intent, subcommand=_root_subcommand(ctx))
+    intent = get_intent(ctx)
+    enforce_intent(intent, subcommand=ctx.find_root().invoked_subcommand)
     return intent
-
-
-def _root_subcommand(ctx: typer.Context) -> str | None:
-    """Name of the top-level command group (`projects` in `sumcli projects list`)."""
-    node, name = ctx, None
-    while node is not None and node.parent is not None:
-        name = node.info_name
-        node = node.parent
-    return name
 
 
 @contextmanager
 def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
-    client = Client(cfg=get_config(ctx, profile), intent=get_intent(ctx))
+    client = Client(cfg=get_config(ctx, profile), intent=require_intent(ctx))
     try:
         yield client
     finally:
@@ -101,8 +98,8 @@ def require_project(
 ) -> str:
     # Intent first: it is a precondition of the whole invocation, so it must not
     # depend on whether a command happens to resolve its project before it builds
-    # a client. get_intent is idempotent, so the later api_client call is a no-op.
-    get_intent(ctx)
+    # a client. Idempotent, so the later api_client call re-checks harmlessly.
+    require_intent(ctx)
     resolved = resolve_project(get_config(ctx), explicit=project)
     if not resolved:
         emit_error(

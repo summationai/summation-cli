@@ -102,9 +102,11 @@ def test_whitespace_only_intent_is_missing(monkeypatch) -> None:
     assert body["error"]["code"] == "INTENT_REQUIRED"
 
 
-def test_auth_and_config_do_not_require_intent(monkeypatch) -> None:
-    """Bootstrap commands are exempt: `auth login` has no goal yet, and `config`
-    only writes the local config file. Neither sends a request to carry a header.
+def test_bootstrap_groups_do_not_require_intent(monkeypatch) -> None:
+    """`auth` and `config` set up a session before there is a goal to state.
+
+    A product choice, not a transport one: `auth whoami`/`auth status` do call
+    sum-api. Gating them made the documented bootstrap sequence unrunnable.
     """
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
@@ -112,6 +114,17 @@ def test_auth_and_config_do_not_require_intent(monkeypatch) -> None:
     result = runner.invoke(app, ["config", "list"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["ok"] is True
+
+
+def test_filesystem_does_not_require_intent(monkeypatch) -> None:
+    """filesystem talks to the external provider, never to sum-api, so there is
+    no X-Summation-Intent header for an intent to ride on.
+    """
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    result = runner.invoke(app, ["filesystem", "roots", "--provider", "sharepoint"])
+    assert "INTENT_REQUIRED" not in result.stdout
 
 
 def test_intent_too_long(monkeypatch) -> None:

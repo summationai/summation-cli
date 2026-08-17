@@ -32,10 +32,10 @@ sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **State intent** — every command that reads or writes data must include `--intent` as a root option before the subcommand. Use the human's request **in their own words** when possible — not a summary of the command you are running. Keep it under 500 characters; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to that same string to cover a whole session.
+2. **State intent** — every command that reads or writes Summation data must include `--intent` as a root option before the subcommand. Use the human's request **in their own words** when possible — not a summary of the command you are running. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to that same string to cover a whole session.
    - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
    - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
-   - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth` and `config` groups. Setup runs before there is a goal to state, and `config` only writes the local config file.
+   - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external provider, not to sum-api.
    - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
 3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
@@ -52,7 +52,7 @@ sumcli update    # root command: upgrade to the latest PyPI release
 
 `--intent` is required when stdout is not a TTY (agents, pipes). Use the human's request **in their own words** when possible, not a command summary. `SUMCLI_INTENT` satisfies the same requirement for a session. Humans at an interactive terminal may omit it.
 
-Discovery, `--help`, `--version`, `update`, and the `auth` and `config` groups do not need it, so the setup sequence below runs as written.
+Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups do not need it, so the setup sequence below runs as written.
 
 Project-scoped commands accept `--project` when no default is set.
 

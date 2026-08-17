@@ -6,8 +6,8 @@ value is sent to sum-api as ``X-Summation-Intent``.
 
 Two steps, deliberately split. ``resolve_intent`` normalizes in the root callback
 and never refuses, because that callback also runs for discovery and ``--help``.
-``require_intent`` enforces the contract from ``commands.get_intent``, which only
-runs when a command really talks to sum-api. Keeping enforcement there means the
+``enforce_intent`` backs ``commands.require_intent``, which only runs when a
+command really talks to sum-api. Keeping enforcement there means the
 exemptions follow from control flow instead of from inspecting argv — Click never
 runs a command body for ``--help``, so help cannot be mistaken for a real call and
 an option *value* of ``--help`` cannot be mistaken for a help request.
@@ -27,11 +27,18 @@ INTENT_HEADER = "X-Summation-Intent"
 # what every request carries, and non-ASCII expands up to 4x once encoded.
 INTENT_MAX_LENGTH = 500
 
-# Discovery, upgrades, and --version do not record a user goal. `auth` is
-# exempt because login bootstraps a session before any goal exists, and
-# `config` only ever touches the local config file — neither sends a request
-# for the header to ride on, so gating them blocks setup and buys nothing.
-_INTENT_EXEMPT_SUBCOMMANDS = frozenset({None, "update", "auth", "config"})
+# Discovery, upgrades, and --version do not record a user goal.
+#
+# `auth` and `config` are a product choice, not a transport fact: some of them
+# (auth whoami, auth status) do call sum-api and could carry the header. They are
+# exempt because they are how a session gets set up — an agent must be able to log
+# in and pick a profile before it has a goal to state, and gating that made the
+# documented bootstrap sequence unrunnable.
+#
+# `filesystem` is exempt for the transport reason: those commands talk to the
+# external provider (SharePoint, S3) with that provider's own credentials and
+# never reach sum-api, so there is no X-Summation-Intent header to send.
+_INTENT_EXEMPT_SUBCOMMANDS = frozenset({None, "update", "auth", "config", "filesystem"})
 
 # C0 and DEL. str.split() drops CR/LF (so request splitting is already
 # impossible) but leaves NUL, ESC, and friends intact: NUL makes h11 reject the
@@ -125,7 +132,7 @@ def resolve_intent(raw: str | None) -> str | None:
     return normalize_intent(raw)
 
 
-def require_intent(intent: str | None, *, subcommand: str | None) -> None:
+def enforce_intent(intent: str | None, *, subcommand: str | None) -> None:
     """Enforce the intent contract for a command that is about to call sum-api."""
     if intent is not None:
         encoded = intent_header_length(intent)
