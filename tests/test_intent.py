@@ -67,13 +67,31 @@ def test_missing_intent_is_required_when_piped(monkeypatch) -> None:
 
 
 def test_tty_may_omit_intent(monkeypatch) -> None:
+    """A human rendering human output is not asked for an intent.
+
+    Uses a non-exempt group on purpose: `config` never reaches the check, so it
+    could not tell a working gate from a broken one.
+    """
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "human")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: True)
+    result = runner.invoke(app, ["projects", "list"])
+    assert "INTENT_REQUIRED" not in result.stdout
+
+
+def test_json_output_on_a_tty_still_requires_intent(monkeypatch) -> None:
+    """Asking for JSON declares you a machine, PTY or not.
+
+    Agent harnesses run on a pty (tmux, script, pexpect, docker -t, CI) and set
+    SUMCLI_OUTPUT=json. Keying the gate on isatty alone exempted exactly those
+    callers, so the sessions the header exists to attribute sent no header.
+    """
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: True)
-    result = runner.invoke(app, ["config", "list"])
-    assert result.exit_code == 0
-    body = json.loads(result.stdout)
-    assert body["ok"] is True
+    result = runner.invoke(app, ["projects", "list"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "INTENT_REQUIRED"
 
 
 def test_intent_flag_satisfies_requirement(monkeypatch) -> None:
@@ -111,9 +129,13 @@ def test_bootstrap_groups_do_not_require_intent(monkeypatch) -> None:
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
-    result = runner.invoke(app, ["config", "list"])
-    assert result.exit_code == 0
-    assert json.loads(result.stdout)["ok"] is True
+    # `auth`, not `config`: config never reaches the gate, so it cannot tell a
+    # working exemption from a missing one. auth whoami goes through api_client.
+    assert intent_required(subcommand="auth", isatty=False) is False
+    assert "INTENT_REQUIRED" not in runner.invoke(app, ["auth", "whoami"]).stdout
+    assert "INTENT_REQUIRED" not in runner.invoke(app, ["config", "list"]).stdout
+    whoami = runner.invoke(app, ["auth", "whoami"])
+    assert "INTENT_REQUIRED" not in whoami.stdout
 
 
 def test_filesystem_does_not_require_intent(monkeypatch) -> None:
@@ -123,8 +145,45 @@ def test_filesystem_does_not_require_intent(monkeypatch) -> None:
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    # Assert the exemption directly too: filesystem has no sum-api code path, so
+    # invoking it alone would pass even if the exemption were deleted.
+    assert intent_required(subcommand="filesystem", isatty=False) is False
     result = runner.invoke(app, ["filesystem", "roots", "--provider", "sharepoint"])
     assert "INTENT_REQUIRED" not in result.stdout
+
+
+def test_non_utf8_intent_does_not_crash(monkeypatch) -> None:
+    """argv/env decode with surrogateescape, so a non-UTF-8 byte arrives as a lone
+    surrogate. Encoding one raised UnicodeEncodeError deep in the send path, which
+    surfaced as INTERNAL_ERROR carrying a raw codec message.
+    """
+    normalized = normalize_intent("fix the \udcff report")
+    assert normalized is not None
+    encode_intent_header(normalized)  # the point: this no longer raises
+
+    monkeypatch.setenv("SUMCLI_INTENT", "fix the \udcff report")
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    assert "INTERNAL_ERROR" not in runner.invoke(app, ["projects", "list"]).stdout
+
+
+def test_over_long_intent_is_ignored_by_exempt_groups(monkeypatch) -> None:
+    """Exempt groups skip the length check too.
+
+    `auth` reaches sum-api through api_client, so checking length before the
+    exemption failed `auth whoami` for a value that command never sends, while
+    `config list` beside it succeeded.
+    """
+    monkeypatch.setenv("SUMCLI_INTENT", "x" * (INTENT_MAX_LENGTH + 100))
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    for args in (
+        ["auth", "whoami"],
+        ["config", "list"],
+        ["filesystem", "roots", "--provider", "sharepoint"],
+    ):
+        assert "INTENT_TOO_LONG" not in runner.invoke(app, args).stdout, args
+    assert "INTENT_TOO_LONG" in runner.invoke(app, ["projects", "list"]).stdout
 
 
 def test_intent_too_long(monkeypatch) -> None:

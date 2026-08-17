@@ -19,7 +19,7 @@ import re
 import sys
 from urllib.parse import quote
 
-from sum_cli.output import action, emit_error, err, param
+from sum_cli.output import action, emit_error, err, get_output_mode, param
 
 INTENT_ENV = "SUMCLI_INTENT"
 INTENT_HEADER = "X-Summation-Intent"
@@ -51,7 +51,12 @@ def normalize_intent(raw: str | None) -> str | None:
     """Collapse whitespace and strip control characters into one header-safe line."""
     if raw is None:
         return None
-    value = " ".join(_CONTROL_CHARS.sub(" ", raw).split())
+    # argv and os.environ decode with surrogateescape, so a byte that is not valid
+    # UTF-8 (a Latin-1 paste, a non-UTF-8 locale) arrives as a lone surrogate. Those
+    # cannot be UTF-8 encoded, so quote() would raise UnicodeEncodeError deep in the
+    # send path and surface as an INTERNAL_ERROR carrying a raw codec message.
+    value = raw.encode("utf-8", "replace").decode("utf-8")
+    value = " ".join(_CONTROL_CHARS.sub(" ", value).split())
     return value or None
 
 
@@ -74,6 +79,19 @@ def stdout_is_tty() -> bool:
     return sys.stdout.isatty()
 
 
+def caller_is_agent() -> bool:
+    """Whether this invocation is machine-driven.
+
+    Reuses the already-resolved output mode rather than probing the TTY again.
+    ``resolve_output_mode`` reads flag -> SUMCLI_OUTPUT -> isatty, so a caller that
+    asks for JSON has declared itself a machine even on a PTY. Testing isatty alone
+    missed exactly that case: agent harnesses on a pty (tmux, script, pexpect,
+    docker -t, CI) that set SUMCLI_OUTPUT=json were exempted, so the sessions the
+    header exists to attribute were the ones sending no header.
+    """
+    return get_output_mode() == "json"
+
+
 def intent_required(*, subcommand: str | None, isatty: bool | None = None) -> bool:
     """Whether this command must carry an intent.
 
@@ -84,9 +102,9 @@ def intent_required(*, subcommand: str | None, isatty: bool | None = None) -> bo
     """
     if subcommand in _INTENT_EXEMPT_SUBCOMMANDS:
         return False
-    if isatty is None:
-        isatty = stdout_is_tty()
-    return not isatty
+    if isatty is not None:
+        return not isatty
+    return caller_is_agent()
 
 
 def reject_missing_intent() -> None:
@@ -133,10 +151,23 @@ def resolve_intent(raw: str | None) -> str | None:
 
 
 def enforce_intent(intent: str | None, *, subcommand: str | None) -> None:
-    """Enforce the intent contract for a command that is about to call sum-api."""
-    if intent is not None:
-        encoded = intent_header_length(intent)
-        if encoded > INTENT_MAX_LENGTH:
-            reject_intent_too_long(encoded)
-    if intent is None and intent_required(subcommand=subcommand):
-        reject_missing_intent()
+    """Enforce the intent contract for a command that is about to call sum-api.
+
+    The two rules have different scopes, and conflating them broke things both
+    ways. *Requiring* an intent depends on the caller (agents must, humans at a
+    TTY need not). *Capping* one applies to any value that will really be sent,
+    a human's included, because the cap bounds the header.
+
+    Exempt groups skip both. `auth` reaches sum-api through api_client, so
+    checking length ahead of the exemption failed `auth whoami` over a value that
+    command never sends, while `config list` beside it succeeded.
+    """
+    if subcommand in _INTENT_EXEMPT_SUBCOMMANDS:
+        return
+    if intent is None:
+        if intent_required(subcommand=subcommand):
+            reject_missing_intent()
+        return
+    encoded = intent_header_length(intent)
+    if encoded > INTENT_MAX_LENGTH:
+        reject_intent_too_long(encoded)
