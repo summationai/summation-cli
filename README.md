@@ -371,9 +371,9 @@ sumcli projects --help   # per-command flags and Typer help strings
 sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
 
-`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is required when stdout is not a TTY (agents and pipes) and is sent to sum-api as `X-Summation-Intent`. Humans at an interactive terminal may omit it. `SUMCLI_INTENT` sets the same string for a session. `--intent` is a root option and must precede the subcommand.
+`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is sent to sum-api as `X-Summation-Intent`. It is optional: omitting it in machine mode (piped, or `--output json`) prints a warning on stderr and the command still runs, so unattended callers such as Dagster ops keep working. Agents should always pass it — without it a run cannot be joined to a goal. `SUMCLI_INTENT` sets the string for a session. `--intent` is a root option and must precede the subcommand.
 
-These do not need it: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external storage provider with that provider's credentials and never reaches sum-api. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding — so non-ASCII text gets fewer than 500 characters.
+No warning at all for: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external storage provider with that provider's credentials and never reaches sum-api. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding — so non-ASCII text gets fewer than 500 characters. An oversized intent is refused with `INTENT_TOO_LONG`, since that value would go on the wire.
 
 Project-scoped commands accept `--project` when no default project is configured.
 

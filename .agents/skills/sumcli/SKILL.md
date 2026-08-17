@@ -32,7 +32,7 @@ sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **State intent** — every command that reads or writes Summation data must include `--intent` as a root option before the subcommand. Use the human's request **in their own words** when possible — not a summary of the command you are running. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to that same string to cover a whole session.
+2. **State intent** — always pass `--intent` as a root option before the subcommand on any command that reads or writes Summation data. Use the human's request **in their own words** — not a summary of the command you are running. The CLI does not fail without it (unattended pipelines have no ask to state), but it warns, and the run cannot be joined to a goal. You are an agent: you have the human's words, so send them. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to cover a whole session.
    - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
    - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
    - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external provider, not to sum-api.
@@ -50,7 +50,7 @@ sumcli --intent "human's request" [--profile NAME] [--base-url URL] [--output js
 sumcli update    # root command: upgrade to the latest PyPI release
 ```
 
-`--intent` is required when stdout is not a TTY (agents, pipes). Use the human's request **in their own words** when possible, not a command summary. `SUMCLI_INTENT` satisfies the same requirement for a session. Humans at an interactive terminal may omit it.
+`--intent` is optional but expected of agents. Omitting it in machine mode (piped, or `--output json`) prints a one-line warning on stderr and the command still runs — stdout stays a clean envelope. `SUMCLI_INTENT` covers a whole session. An intent over 500 bytes is refused, because that value would go on the wire.
 
 Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups do not need it, so the setup sequence below runs as written.
 
@@ -409,7 +409,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 - Success/validation: one JSON envelope (`ok`, `result` / `error`, often `next_actions`).
 - `--follow` / import streams: NDJSON lines; **last line** is terminal `result` or `error`.
-- Failures: exit **1**. Codes include `NO_PROJECT`, `CONFIRM_REQUIRED`, `INVALID_FLAGS`, `IMPORT_FAILED`, `INTERNAL_ERROR`.
+- Failures: exit **1**. Codes include `NO_PROJECT`, `CONFIRM_REQUIRED`, `INVALID_FLAGS`, `IMPORT_FAILED`, `INTENT_TOO_LONG`, `INTERNAL_ERROR`.
 - Human TTY view is lossy — never parse it; use JSON mode.
 
 ## Env vars (quick)

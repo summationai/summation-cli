@@ -210,17 +210,17 @@ def _root(
         "--intent",
         envvar="SUMCLI_INTENT",
         help="The human's request, using their words when possible (not a "
-        "command summary). Required for agents (non-TTY). Discovery, --help, "
-        "--version, update, and the auth, config, and filesystem groups do not "
-        'need it. Example: --intent "convert my weekly recap".',
+        "command summary). Optional, but strongly recommended for agents: "
+        "without it a run cannot be joined to a goal, and sumcli warns on "
+        'stderr. Example: --intent "convert my weekly recap".',
     ),
 ) -> None:
     debug_log.set_verbose(verbose)
     # `output` is resolved by its eager callback (_output_callback) before this body
     # runs, so the mode is already set here; nothing more to do with it.
     del output
-    # Normalize only. The requirement is enforced in commands.require_intent, at
-    # the point a command actually calls sum-api — this callback also runs for
+    # Normalize only. commands.checked_intent warns about a missing intent at the
+    # point a command actually calls sum-api — this callback also runs for
     # discovery and --help, which must never be refused.
     ctx.obj = CliContext(
         profile=profile, base_url=base_url, verbose=verbose, intent=resolve_intent(intent)

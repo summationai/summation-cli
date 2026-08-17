@@ -1,16 +1,20 @@
 """Resolve and validate the root ``--intent`` / ``SUMCLI_INTENT`` value.
 
 Agents should use the human's words when possible so later events can join to a
-goal, not a summary of the command. Humans at a TTY may omit it. The normalized
-value is sent to sum-api as ``X-Summation-Intent``.
+goal, not a summary of the command. The normalized value is sent to sum-api as
+``X-Summation-Intent``.
 
-Two steps, deliberately split. ``resolve_intent`` normalizes in the root callback
-and never refuses, because that callback also runs for discovery and ``--help``.
-``enforce_intent`` backs ``commands.require_intent``, which only runs when a
-command really talks to sum-api. Keeping enforcement there means the
-exemptions follow from control flow instead of from inspecting argv — Click never
-runs a command body for ``--help``, so help cannot be mistaken for a real call and
-an option *value* of ``--help`` cannot be mistaken for a help request.
+**Optional, never required.** A missing intent warns once on stderr and the
+command runs. sumcli is called unattended — Dagster ops shell out to it — and
+those callers have no human ask to state, so refusing them would break working
+pipelines to collect a field they cannot supply. An oversized intent is still
+refused, because that value would go on the wire.
+
+``resolve_intent`` normalizes in the root callback, which also runs for discovery
+and ``--help``. ``enforce_intent`` backs ``commands.checked_intent`` and runs only
+where a command really talks to sum-api, so the exemptions follow from control
+flow instead of from inspecting argv — Click never runs a command body for
+``--help``, so an option *value* of ``--help`` cannot read as a help request.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import re
 import sys
 from urllib.parse import quote
 
-from sum_cli.output import action, emit_error, err, get_output_mode, param
+from sum_cli.output import emit_error, err, get_output_mode
 
 INTENT_ENV = "SUMCLI_INTENT"
 INTENT_HEADER = "X-Summation-Intent"
@@ -45,6 +49,9 @@ _INTENT_EXEMPT_SUBCOMMANDS = frozenset({None, "update", "auth", "config", "files
 # send as an opaque NETWORK_ERROR, and ESC injects terminal escapes into any log
 # that renders the value. Mirrors the allowlist user_agent() applies in client.py.
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+# Warn once per process, like update_check does.
+_warned_missing = False
 
 
 def normalize_intent(raw: str | None) -> str | None:
@@ -92,13 +99,13 @@ def caller_is_agent() -> bool:
     return get_output_mode() == "json"
 
 
-def intent_required(*, subcommand: str | None, isatty: bool | None = None) -> bool:
-    """Whether this command must carry an intent.
+def intent_expected(*, subcommand: str | None, isatty: bool | None = None) -> bool:
+    """Whether this command ought to carry an intent (machine-mode, non-exempt).
 
-    Deliberately has no notion of ``--help``. Enforcement happens at the point a
-    command actually talks to sum-api (see ``require_intent``), and Click never
-    runs a command body for a ``--help`` invocation — so help exempts itself and
-    no code has to guess which argv token is a flag and which is an option value.
+    Drives the warning only — nothing here refuses. Deliberately has no notion of
+    ``--help``: the check runs where a command talks to sum-api, and Click never
+    runs a command body for ``--help``, so help exempts itself and no code has to
+    guess which argv token is a flag and which is an option value.
     """
     if subcommand in _INTENT_EXEMPT_SUBCOMMANDS:
         return False
@@ -107,25 +114,22 @@ def intent_required(*, subcommand: str | None, isatty: bool | None = None) -> bo
     return caller_is_agent()
 
 
-def reject_missing_intent() -> None:
-    emit_error(
-        err(
-            "INTENT_REQUIRED",
-            "This command requires --intent (the human's request, in their words when possible).",
-            'Re-run with --intent "<human\'s request>", or set SUMCLI_INTENT. '
-            "Use the human's words when possible — not a summary of the command.",
-            next_actions=[
-                action(
-                    "Retry with intent",
-                    'sumcli --intent "<human\'s request>" <resource> <action>',
-                    params={
-                        "human's request": param(
-                            "The human's request, using their words when possible"
-                        )
-                    },
-                ),
-            ],
-        )
+def warn_missing_intent() -> None:
+    """One stderr line per process when a machine-mode call carries no intent.
+
+    A warning, not a refusal. sumcli runs unattended in pipelines (Dagster ops
+    shell out to it), and those callers have no human ask to state — failing them
+    would break working schedules to collect a field they cannot supply. stderr
+    keeps stdout a clean JSON envelope for whoever is parsing it.
+    """
+    global _warned_missing
+    if _warned_missing:
+        return
+    _warned_missing = True
+    print(
+        "sumcli: no --intent given, so this run cannot be joined to a goal. "
+        'Pass --intent "<the human\'s request>" or set SUMCLI_INTENT.',
+        file=sys.stderr,
     )
 
 
@@ -141,7 +145,7 @@ def reject_intent_too_long(length: int) -> None:
 
 
 def resolve_intent(raw: str | None) -> str | None:
-    """Normalize the raw value. Never refuses — see ``require_intent``.
+    """Normalize the raw value. Never refuses — see ``checked_intent``.
 
     Runs in the root callback, which also fires for exempt invocations such as
     discovery and ``--help``, so refusing here would lock an agent out of the very
@@ -165,8 +169,8 @@ def enforce_intent(intent: str | None, *, subcommand: str | None) -> None:
     if subcommand in _INTENT_EXEMPT_SUBCOMMANDS:
         return
     if intent is None:
-        if intent_required(subcommand=subcommand):
-            reject_missing_intent()
+        if intent_expected(subcommand=subcommand):
+            warn_missing_intent()
         return
     encoded = intent_header_length(intent)
     if encoded > INTENT_MAX_LENGTH:

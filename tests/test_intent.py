@@ -17,7 +17,7 @@ from sum_cli.intent import (
     INTENT_HEADER,
     INTENT_MAX_LENGTH,
     encode_intent_header,
-    intent_required,
+    intent_expected,
     normalize_intent,
 )
 from sum_cli.output import _command_from_argv
@@ -39,11 +39,11 @@ def test_encode_intent_header_percent_encodes_non_ascii() -> None:
     assert encode_intent_header("café") == "caf%C3%A9"
 
 
-def test_intent_required_exempts_meta_and_tty() -> None:
-    assert intent_required(subcommand=None, isatty=False) is False
-    assert intent_required(subcommand="update", isatty=False) is False
-    assert intent_required(subcommand="projects", isatty=True) is False
-    assert intent_required(subcommand="projects", isatty=False) is True
+def test_intent_expected_exempts_meta_and_tty() -> None:
+    assert intent_expected(subcommand=None, isatty=False) is False
+    assert intent_expected(subcommand="update", isatty=False) is False
+    assert intent_expected(subcommand="projects", isatty=True) is False
+    assert intent_expected(subcommand="projects", isatty=False) is True
 
 
 def test_normalize_intent_strips_control_characters() -> None:
@@ -56,14 +56,20 @@ def test_normalize_intent_strips_control_characters() -> None:
     assert normalize_intent("\x00\x1b") is None
 
 
-def test_missing_intent_is_required_when_piped(monkeypatch) -> None:
+def test_missing_intent_warns_but_still_runs(monkeypatch) -> None:
+    """Never a refusal: sumcli runs unattended in pipelines that have no ask.
+
+    The warning goes to stderr so stdout stays a clean envelope for parsers.
+    """
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    monkeypatch.setattr("sum_cli.intent._warned_missing", False)
     result = runner.invoke(app, ["projects", "list"])
-    assert result.exit_code == 1
-    body = json.loads(result.stdout)
-    assert body["ok"] is False
-    assert body["error"]["code"] == "INTENT_REQUIRED"
+    # Past the intent check and on to real work: it fails at auth in this
+    # fixture, never with a refusal about the intent.
+    assert "no --intent given" in result.stderr
+    assert "INTENT" not in result.stdout
 
 
 def test_tty_may_omit_intent(monkeypatch) -> None:
@@ -76,7 +82,7 @@ def test_tty_may_omit_intent(monkeypatch) -> None:
     monkeypatch.setenv("SUMCLI_OUTPUT", "human")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: True)
     result = runner.invoke(app, ["projects", "list"])
-    assert "INTENT_REQUIRED" not in result.stdout
+    assert "no --intent given" not in result.stderr
 
 
 def test_json_output_on_a_tty_still_requires_intent(monkeypatch) -> None:
@@ -89,9 +95,10 @@ def test_json_output_on_a_tty_still_requires_intent(monkeypatch) -> None:
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: True)
+    monkeypatch.setattr("sum_cli.intent._warned_missing", False)
     result = runner.invoke(app, ["projects", "list"])
-    assert result.exit_code == 1
-    assert json.loads(result.stdout)["error"]["code"] == "INTENT_REQUIRED"
+    assert "no --intent given" in result.stderr
+    assert "INTENT" not in result.stdout
 
 
 def test_intent_flag_satisfies_requirement(monkeypatch) -> None:
@@ -114,10 +121,9 @@ def test_whitespace_only_intent_is_missing(monkeypatch) -> None:
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    monkeypatch.setattr("sum_cli.intent._warned_missing", False)
     result = runner.invoke(app, ["--intent", "   ", "projects", "list"])
-    assert result.exit_code == 1
-    body = json.loads(result.stdout)
-    assert body["error"]["code"] == "INTENT_REQUIRED"
+    assert "no --intent given" in result.stderr
 
 
 def test_bootstrap_groups_do_not_require_intent(monkeypatch) -> None:
@@ -131,11 +137,11 @@ def test_bootstrap_groups_do_not_require_intent(monkeypatch) -> None:
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
     # `auth`, not `config`: config never reaches the gate, so it cannot tell a
     # working exemption from a missing one. auth whoami goes through api_client.
-    assert intent_required(subcommand="auth", isatty=False) is False
-    assert "INTENT_REQUIRED" not in runner.invoke(app, ["auth", "whoami"]).stdout
-    assert "INTENT_REQUIRED" not in runner.invoke(app, ["config", "list"]).stdout
+    assert intent_expected(subcommand="auth", isatty=False) is False
+    assert "no --intent given" not in runner.invoke(app, ["auth", "whoami"]).stderr
+    assert "no --intent given" not in runner.invoke(app, ["config", "list"]).stderr
     whoami = runner.invoke(app, ["auth", "whoami"])
-    assert "INTENT_REQUIRED" not in whoami.stdout
+    assert "no --intent given" not in whoami.stderr
 
 
 def test_filesystem_does_not_require_intent(monkeypatch) -> None:
@@ -147,9 +153,9 @@ def test_filesystem_does_not_require_intent(monkeypatch) -> None:
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
     # Assert the exemption directly too: filesystem has no sum-api code path, so
     # invoking it alone would pass even if the exemption were deleted.
-    assert intent_required(subcommand="filesystem", isatty=False) is False
+    assert intent_expected(subcommand="filesystem", isatty=False) is False
     result = runner.invoke(app, ["filesystem", "roots", "--provider", "sharepoint"])
-    assert "INTENT_REQUIRED" not in result.stdout
+    assert "no --intent given" not in result.stderr
 
 
 def test_non_utf8_intent_does_not_crash(monkeypatch) -> None:
@@ -226,7 +232,7 @@ def test_help_does_not_require_intent(monkeypatch) -> None:
     for args in (["projects", "list", "--help"], ["projects", "--help"], ["--help"]):
         result = runner.invoke(app, args)
         assert result.exit_code == 0, args
-        assert "INTENT_REQUIRED" not in result.stdout
+        assert "no --intent given" not in result.stderr, args
 
 
 def test_help_valued_option_does_not_bypass_intent(monkeypatch) -> None:
@@ -239,9 +245,11 @@ def test_help_valued_option_does_not_bypass_intent(monkeypatch) -> None:
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
     for value in ("--help", "-h"):
+        monkeypatch.setattr("sum_cli.intent._warned_missing", False)
         result = runner.invoke(app, ["chats", "create", "--message", value])
-        assert result.exit_code == 1, value
-        assert json.loads(result.stdout)["error"]["code"] == "INTENT_REQUIRED", value
+        # The command really runs (it is not a help request), so the missing
+        # intent is noticed rather than silently skipped.
+        assert "no --intent given" in result.stderr, value
 
 
 def test_long_intent_does_not_break_exempt_commands(monkeypatch) -> None:
