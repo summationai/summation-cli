@@ -22,6 +22,7 @@ uv tool install summation-cli
 # or from this repo (editable):
 uv tool install .
 curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
+sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
 ```
 
 ## Agent rules
@@ -41,6 +42,7 @@ curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
 
 ```text
 sumcli [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
+sumcli update    # root command: upgrade to the latest PyPI release
 ```
 
 Project-scoped commands accept `--project` when no default is set.

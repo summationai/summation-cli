@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import httpx
 import typer
 
 from sum_cli import __version__, debug_log
@@ -43,6 +44,7 @@ from sum_cli.resources import (
     tenant,
     views,
 )
+from sum_cli.update_check import run_upgrade, warn_if_outdated
 
 
 @dataclass
@@ -97,6 +99,7 @@ def _output_callback(value: OutputChoice | None) -> OutputChoice | None:
 
 def _version_callback(value: bool) -> None:
     if value:
+        warn_if_outdated()
         emit(
             {
                 "ok": True,
@@ -206,6 +209,8 @@ def _root(
     # runs, so the mode is already set here; nothing more to do with it.
     del output
     ctx.obj = CliContext(profile=profile, base_url=base_url, verbose=verbose)
+    if ctx.invoked_subcommand != "update":
+        warn_if_outdated()
     if ctx.invoked_subcommand is None:
         try:
             emit(build_command_tree_envelope())
@@ -219,6 +224,12 @@ def _root(
                 )
             )
         raise typer.Exit()
+
+
+@app.command("update")
+def update_cli() -> None:
+    """Install the latest PyPI release of a uv-managed sumcli, including over a version pin."""
+    run_upgrade()
 
 
 def main() -> None:
@@ -251,6 +262,18 @@ def main() -> None:
         if e.method and e.url:
             debug_log.log_api_error(e.status, e.body, method=e.method, url=e.url)
         emit_error(_api_error_envelope(e))
+    except httpx.HTTPError as e:
+        emit_error(
+            err(
+                "NETWORK_ERROR",
+                str(e),
+                "Check that you are online and that the profile base URL is reachable.",
+                next_actions=[
+                    action("Show config", "sumcli config active"),
+                    action("Show version", "sumcli --version"),
+                ],
+            )
+        )
     except Exception as e:
         emit_error(
             err(

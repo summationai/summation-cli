@@ -31,8 +31,13 @@ Then:
 
 ```bash
 sumcli --help
-uv tool upgrade summation-cli   # later upgrades
+sumcli update                   # upgrade a uv-managed install to the latest PyPI release
 ```
+
+A stderr notice appears when a newer version is on PyPI. Lookups are cached
+(a day on success, 15 minutes after a failed fetch).
+Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
+`sumcli update` upgrades a uv-managed install only.
 
 ## Resources
 
