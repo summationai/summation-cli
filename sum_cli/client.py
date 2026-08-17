@@ -11,6 +11,7 @@ import httpx
 from sum_cli import debug_log
 from sum_cli.auth import TokenResult, acquire_token, token_cache_valid
 from sum_cli.config import Config, load
+from sum_cli.intent import INTENT_HEADER, encode_intent_header
 
 
 class ApiError(RuntimeError):
@@ -55,8 +56,9 @@ def _token_cache_key(cfg: Config) -> tuple:
 class Client:
     _token_cache: dict[tuple, TokenResult] = {}
 
-    def __init__(self, cfg: Config | None = None):
+    def __init__(self, cfg: Config | None = None, *, intent: str | None = None):
         self.cfg = cfg or load()
+        self.intent = intent
         self._http = httpx.Client(timeout=30.0)
 
     @classmethod
@@ -90,6 +92,8 @@ class Client:
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         h = {"Authorization": f"Bearer {self._token_result().access_token}"}
+        if self.intent:
+            h[INTENT_HEADER] = encode_intent_header(self.intent)
         if extra:
             h.update(extra)
         return h

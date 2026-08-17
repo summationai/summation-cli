@@ -64,9 +64,15 @@ def get_config(ctx: typer.Context, profile: str | None = None) -> Config:
     return load(profile=profile)
 
 
+def get_intent(ctx: typer.Context) -> str | None:
+    if ctx.obj is not None:
+        return getattr(ctx.obj, "intent", None)
+    return None
+
+
 @contextmanager
 def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
-    client = Client(cfg=get_config(ctx, profile))
+    client = Client(cfg=get_config(ctx, profile), intent=get_intent(ctx))
     try:
         yield client
     finally:

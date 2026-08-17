@@ -15,9 +15,9 @@ from sum_cli.auth import (
     start_device_login,
 )
 from sum_cli.client import Client
+from sum_cli.commands import ProfileOption, api_client, get_config, get_intent, unwrap_data
 from sum_cli.config_store import redact
 from sum_cli.output import action, emit, emit_error, err, ok
-from sum_cli.commands import ProfileOption, api_client, get_config, unwrap_data
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -231,7 +231,7 @@ def status(ctx: typer.Context, profile: ProfileOption = None) -> None:
 @app.command("token")
 def show_token(ctx: typer.Context, profile: ProfileOption = None) -> None:
     cfg = get_config(ctx, profile)
-    with Client(cfg) as c:
+    with Client(cfg, intent=get_intent(ctx)) as c:
         token = c.token()
     emit(
         ok(

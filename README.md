@@ -338,6 +338,7 @@ Explicit `--project` always wins. When both file and env set a default, **the fi
 | `SUM_API_CLIENT_SECRET` | M2M client secret |
 | `SUM_API_ACCESS_TOKEN` | Static bearer token (skips M2M exchange) |
 | `SUM_API_M2M_SCOPE` | Optional scope on M2M token request |
+| `SUMCLI_INTENT` | Default `--intent` (human's request, their words when possible) |
 | `SHAREPOINT_TENANT_ID` | Azure AD tenant for SharePoint app-only auth |
 | `SHAREPOINT_CLIENT_ID` | SharePoint app client id (falls back to `CLIENT_ID`) |
 | `SHAREPOINT_CLIENT_SECRET` | SharePoint app secret (falls back to `CLIENT_SECRET`) |
@@ -367,8 +368,10 @@ sumcli projects --help   # per-command flags and Typer help strings
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] <resource> <action> [--options]
+sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
+
+`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is required when stdout is not a TTY (agents and pipes) and is sent to sum-api as `X-Summation-Intent`. Discovery (`sumcli` with no args), `--version`, `update`, and `--help` do not need it. Humans at an interactive terminal may omit it. `SUMCLI_INTENT` sets the same string for a session. `--intent` is a root option and must precede the subcommand.
 
 Project-scoped commands accept `--project` when no default project is configured.
 

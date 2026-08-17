@@ -32,18 +32,23 @@ sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
-3. **Root options before subcommand**: `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
-5. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
-6. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
+2. **State intent** — every working command (not discovery, `--version`, `update`, or `--help`) must include `--intent` as a root option before the subcommand. Use the human's request **in their own words** when possible — not a summary of the command you are running. If the ask is longer than 500 characters, use the leading stretch of their words. Or set `SUMCLI_INTENT` once to that same string for the session.
+   - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
+   - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
+3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
+4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
+6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
+7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
+sumcli --intent "human's request" [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
 sumcli update    # root command: upgrade to the latest PyPI release
 ```
+
+`--intent` is required when stdout is not a TTY (agents, pipes). Use the human's request **in their own words** when possible, not a command summary. `SUMCLI_INTENT` satisfies the same requirement for a session. Humans at an interactive terminal may omit it.
 
 Project-scoped commands accept `--project` when no default is set.
 
@@ -400,7 +405,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_NO_UPDATE_CHECK`.
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_UPDATE_CHECK`.
 
 ## More detail
 

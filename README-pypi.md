@@ -208,8 +208,10 @@ sumcli projects --help   # per-command flags and help strings
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] <resource> <action> [--options]
+sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
+
+`--intent` is the human's request, using their words when possible (not a command summary). Required when stdout is not a TTY (agents and pipes); optional at an interactive terminal. Discovery, `--version`, `update`, and `--help` do not need it. `SUMCLI_INTENT` sets the same string for a session.
 
 Project-scoped commands accept `--project` when no default project is configured.
 
