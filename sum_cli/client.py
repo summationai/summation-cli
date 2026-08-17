@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import httpx
 
-from sum_cli import debug_log
+from sum_cli import __version__, debug_log
 from sum_cli.auth import TokenResult, acquire_token, token_cache_valid
 from sum_cli.config import Config, load
 
@@ -52,12 +54,29 @@ def _token_cache_key(cfg: Config) -> tuple:
     return ("m2m", cfg.profile, cfg.base_url, cfg.client_id, cfg.client_secret, cfg.m2m_scope)
 
 
+def user_agent() -> str:
+    """``sumcli/<version>``, plus a caller-context comment when the invoking
+    surface sets SUMCLI_CLIENT_CONTEXT (the plugins set e.g.
+    ``claude-plugin/0.4.0; claude-code``). sum-api's access log derives its
+    ``client_surface`` analytics field from these tokens, so the context must
+    stay a short product token, never free text or anything user-identifying.
+    """
+    ua = f"sumcli/{__version__}"
+    context = os.environ.get("SUMCLI_CLIENT_CONTEXT", "").strip()
+    # UA comments cannot contain parentheses or control chars; cap the length
+    # so a misconfigured env var cannot bloat every request.
+    context = re.sub(r"[^A-Za-z0-9./;: _+-]", "", context)[:64].strip()
+    if context:
+        ua = f"{ua} ({context})"
+    return ua
+
+
 class Client:
     _token_cache: dict[tuple, TokenResult] = {}
 
     def __init__(self, cfg: Config | None = None):
         self.cfg = cfg or load()
-        self._http = httpx.Client(timeout=30.0)
+        self._http = httpx.Client(timeout=30.0, headers={"User-Agent": user_agent()})
 
     @classmethod
     def clear_token_cache(cls) -> None:

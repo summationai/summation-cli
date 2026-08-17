@@ -185,3 +185,53 @@ def test_client_refetches_when_device_login_credential_changes(monkeypatch) -> N
         assert c2.token() == "sm_dls_b"
 
     Client.clear_token_cache()
+
+
+def test_user_agent_default(monkeypatch):
+    monkeypatch.delenv("SUMCLI_CLIENT_CONTEXT", raising=False)
+    from sum_cli import __version__
+    from sum_cli.client import user_agent
+
+    assert user_agent() == f"sumcli/{__version__}"
+
+
+def test_user_agent_includes_sanitized_context(monkeypatch):
+    from sum_cli import __version__
+    from sum_cli.client import user_agent
+
+    monkeypatch.setenv("SUMCLI_CLIENT_CONTEXT", "claude-plugin/0.4.0; claude-code")
+    assert user_agent() == f"sumcli/{__version__} (claude-plugin/0.4.0; claude-code)"
+
+    # Parentheses and control characters are stripped, length capped: the
+    # context must not be able to corrupt the UA comment or bloat requests.
+    monkeypatch.setenv("SUMCLI_CLIENT_CONTEXT", "evil()\r\nplugin" + "x" * 200)
+    value = user_agent()
+    assert "(" in value and value.endswith(")")
+    inner = value.split("(", 1)[1].rstrip(")")
+    assert "(" not in inner and ")" not in inner and "\n" not in inner
+    assert len(inner) <= 64
+
+
+def test_client_sends_user_agent(monkeypatch):
+    monkeypatch.setenv("SUMCLI_CLIENT_CONTEXT", "claude-plugin/0.4.0")
+    from sum_cli import __version__
+    from sum_cli.client import Client
+    from sum_cli.config import Config
+
+    client = Client(
+        cfg=Config(
+            base_url="https://example.com",
+            access_token=None,
+            device_login_credential=None,
+            client_id="cid",
+            client_secret="secret",
+            m2m_scope=None,
+            profile="t",
+            default_project=None,
+            source="test",
+        )
+    )
+    try:
+        assert client._http.headers["user-agent"] == f"sumcli/{__version__} (claude-plugin/0.4.0)"
+    finally:
+        client.close()
