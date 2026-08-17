@@ -210,8 +210,8 @@ def _root(
         "--intent",
         envvar="SUMCLI_INTENT",
         help="The human's request, using their words when possible (not a "
-        "command summary). Required for agents (non-TTY) on every command "
-        "except discovery, --version, update, and --help. "
+        "command summary). Required for agents (non-TTY). Discovery, --help, "
+        "--version, update, and the auth and config groups do not need it. "
         'Example: --intent "convert my weekly recap".',
     ),
 ) -> None:
@@ -219,13 +219,11 @@ def _root(
     # `output` is resolved by its eager callback (_output_callback) before this body
     # runs, so the mode is already set here; nothing more to do with it.
     del output
-    resolved_intent = resolve_intent(
-        intent,
-        subcommand=ctx.invoked_subcommand,
-        extra_tokens=list(ctx.args or []),
-    )
+    # Normalize only. The requirement is enforced in commands.get_intent, at the
+    # point a command actually calls sum-api — this callback also runs for
+    # discovery and --help, which must never be refused.
     ctx.obj = CliContext(
-        profile=profile, base_url=base_url, verbose=verbose, intent=resolved_intent
+        profile=profile, base_url=base_url, verbose=verbose, intent=resolve_intent(intent)
     )
     if ctx.invoked_subcommand != "update":
         warn_if_outdated()

@@ -371,7 +371,9 @@ sumcli projects --help   # per-command flags and Typer help strings
 sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
 
-`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is required when stdout is not a TTY (agents and pipes) and is sent to sum-api as `X-Summation-Intent`. Discovery (`sumcli` with no args), `--version`, `update`, and `--help` do not need it. Humans at an interactive terminal may omit it. `SUMCLI_INTENT` sets the same string for a session. `--intent` is a root option and must precede the subcommand.
+`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is required when stdout is not a TTY (agents and pipes) and is sent to sum-api as `X-Summation-Intent`. Humans at an interactive terminal may omit it. `SUMCLI_INTENT` sets the same string for a session. `--intent` is a root option and must precede the subcommand.
+
+These do not need it: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth` and `config` groups — login happens before there is a goal to state, and `config` only writes the local config file. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding.
 
 Project-scoped commands accept `--project` when no default project is configured.
 

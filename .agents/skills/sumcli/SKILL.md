@@ -32,9 +32,11 @@ sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **State intent** — every working command (not discovery, `--version`, `update`, or `--help`) must include `--intent` as a root option before the subcommand. Use the human's request **in their own words** when possible — not a summary of the command you are running. If the ask is longer than 500 characters, use the leading stretch of their words. Or set `SUMCLI_INTENT` once to that same string for the session.
+2. **State intent** — every command that reads or writes data must include `--intent` as a root option before the subcommand. Use the human's request **in their own words** when possible — not a summary of the command you are running. Keep it under 500 characters; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to that same string to cover a whole session.
    - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
    - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
+   - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth` and `config` groups. Setup runs before there is a goal to state, and `config` only writes the local config file.
+   - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
 3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
 5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
@@ -49,6 +51,8 @@ sumcli update    # root command: upgrade to the latest PyPI release
 ```
 
 `--intent` is required when stdout is not a TTY (agents, pipes). Use the human's request **in their own words** when possible, not a command summary. `SUMCLI_INTENT` satisfies the same requirement for a session. Humans at an interactive terminal may omit it.
+
+Discovery, `--help`, `--version`, `update`, and the `auth` and `config` groups do not need it, so the setup sequence below runs as written.
 
 Project-scoped commands accept `--project` when no default is set.
 
@@ -117,6 +121,9 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 ### CSV → queryable table
 
 ```bash
+# Set the intent once for the session, in the human's own words.
+export SUMCLI_INTENT="get my customer spreadsheet into a table I can query"
+
 # One-shot local ingest (recommended if file need not stay in project tree)
 sumcli tables import --local --path ./Customers.csv --table customers
 # NDJSON ends with importStatus SUCCESS + table_id (tbl-...)
@@ -128,6 +135,8 @@ sumcli catalog list
 sumcli queries run --sql 'SELECT * FROM customers LIMIT 5'
 sumcli queries run --sql 'SELECT * FROM customers' --limit 5
 ```
+
+Without `SUMCLI_INTENT`, pass `--intent "<the human's request>"` before the subcommand on each of these commands.
 
 Two-step (keep CSV in project files): `files upload` then `tables import --remote --path /Customers.csv --table customers`.
 

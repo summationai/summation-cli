@@ -12,6 +12,7 @@ import typer
 
 from sum_cli.client import Client
 from sum_cli.config import Config, load
+from sum_cli.intent import require_intent
 from sum_cli.output import action, emit_error, err, invalid_request, param
 from sum_cli.project_context import resolve_project
 
@@ -65,9 +66,24 @@ def get_config(ctx: typer.Context, profile: str | None = None) -> Config:
 
 
 def get_intent(ctx: typer.Context) -> str | None:
-    if ctx.obj is not None:
-        return getattr(ctx.obj, "intent", None)
-    return None
+    """Resolved intent for this invocation, enforced at the point of use.
+
+    Enforcing here rather than in the root callback is what makes the ``--help``
+    and discovery exemptions self-executing: Click never runs a command body for
+    those, so they never reach this call.
+    """
+    intent = getattr(ctx.obj, "intent", None) if ctx.obj is not None else None
+    require_intent(intent, subcommand=_root_subcommand(ctx))
+    return intent
+
+
+def _root_subcommand(ctx: typer.Context) -> str | None:
+    """Name of the top-level command group (`projects` in `sumcli projects list`)."""
+    node, name = ctx, None
+    while node is not None and node.parent is not None:
+        name = node.info_name
+        node = node.parent
+    return name
 
 
 @contextmanager
@@ -83,6 +99,10 @@ def require_project(
     ctx: typer.Context,
     project: str | None = None,
 ) -> str:
+    # Intent first: it is a precondition of the whole invocation, so it must not
+    # depend on whether a command happens to resolve its project before it builds
+    # a client. get_intent is idempotent, so the later api_client call is a no-op.
+    get_intent(ctx)
     resolved = resolve_project(get_config(ctx), explicit=project)
     if not resolved:
         emit_error(

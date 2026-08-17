@@ -19,7 +19,6 @@ from sum_cli.intent import (
     encode_intent_header,
     intent_required,
     normalize_intent,
-    wants_help,
 )
 from sum_cli.output import _command_from_argv
 
@@ -47,10 +46,14 @@ def test_intent_required_exempts_meta_and_tty() -> None:
     assert intent_required(subcommand="projects", isatty=False) is True
 
 
-def test_wants_help_detects_help_flags() -> None:
-    assert wants_help(["projects", "list", "--help"]) is True
-    assert wants_help(["--help"]) is True
-    assert wants_help(["projects", "list"]) is False
+def test_normalize_intent_strips_control_characters() -> None:
+    # CR/LF were already collapsed by split(); NUL, ESC and DEL were not, and
+    # reached the header verbatim (ESC on the wire, NUL as an opaque send error).
+    assert normalize_intent("a\x00b") == "a b"
+    assert normalize_intent("red\x1b[31mtext") == "red [31mtext"
+    assert normalize_intent("a\x7fb") == "a b"
+    assert normalize_intent("a\r\nX-Evil: 1") == "a X-Evil: 1"
+    assert normalize_intent("\x00\x1b") is None
 
 
 def test_missing_intent_is_required_when_piped(monkeypatch) -> None:
@@ -91,21 +94,47 @@ def test_intent_env_satisfies_requirement(monkeypatch) -> None:
 
 def test_whitespace_only_intent_is_missing(monkeypatch) -> None:
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
-    result = runner.invoke(app, ["--intent", "   ", "config", "list"])
+    result = runner.invoke(app, ["--intent", "   ", "projects", "list"])
     assert result.exit_code == 1
     body = json.loads(result.stdout)
     assert body["error"]["code"] == "INTENT_REQUIRED"
+
+
+def test_auth_and_config_do_not_require_intent(monkeypatch) -> None:
+    """Bootstrap commands are exempt: `auth login` has no goal yet, and `config`
+    only writes the local config file. Neither sends a request to carry a header.
+    """
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    result = runner.invoke(app, ["config", "list"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["ok"] is True
 
 
 def test_intent_too_long(monkeypatch) -> None:
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: True)
-    result = runner.invoke(app, ["--intent", "x" * (INTENT_MAX_LENGTH + 1), "config", "list"])
+    result = runner.invoke(app, ["--intent", "x" * (INTENT_MAX_LENGTH + 1), "projects", "list"])
     assert result.exit_code == 1
     body = json.loads(result.stdout)
     assert body["error"]["code"] == "INTENT_TOO_LONG"
+
+
+def test_intent_cap_counts_encoded_bytes(monkeypatch) -> None:
+    """The cap bounds the wire value, so percent-encoding expansion counts.
+
+    500 non-ASCII characters used to pass and ship a 3000-byte header.
+    """
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: True)
+    result = runner.invoke(app, ["--intent", "é" * INTENT_MAX_LENGTH, "projects", "list"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "INTENT_TOO_LONG"
 
 
 def test_discovery_and_version_do_not_require_intent(monkeypatch) -> None:
@@ -118,11 +147,42 @@ def test_discovery_and_version_do_not_require_intent(monkeypatch) -> None:
 
 
 def test_help_does_not_require_intent(monkeypatch) -> None:
+    # No sys.argv patching: help exempts itself because Click never runs the
+    # command body, so enforcement at the point of use is never reached.
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
-    monkeypatch.setattr(sys, "argv", ["sumcli", "projects", "list", "--help"])
-    result = runner.invoke(app, ["projects", "list", "--help"])
-    assert result.exit_code == 0
-    assert "--help" in result.stdout or "list" in result.stdout.lower()
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    for args in (["projects", "list", "--help"], ["projects", "--help"], ["--help"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, args
+        assert "INTENT_REQUIRED" not in result.stdout
+
+
+def test_help_valued_option_does_not_bypass_intent(monkeypatch) -> None:
+    """An option *value* of --help/-h must not read as a help request.
+
+    Scanning argv could not tell the two apart, so `--message "--help"` skipped
+    the gate and called sum-api with no intent.
+    """
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    for value in ("--help", "-h"):
+        result = runner.invoke(app, ["chats", "create", "--message", value])
+        assert result.exit_code == 1, value
+        assert json.loads(result.stdout)["error"]["code"] == "INTENT_REQUIRED", value
+
+
+def test_long_intent_does_not_break_exempt_commands(monkeypatch) -> None:
+    """A session-wide over-long SUMCLI_INTENT must not lock an agent out.
+
+    Discovery and --help are how an agent reads the rules; refusing them for a
+    too-long value denies it the means to fix the error.
+    """
+    monkeypatch.setenv("SUMCLI_INTENT", "x" * (INTENT_MAX_LENGTH + 100))
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    assert runner.invoke(app, []).exit_code == 0
+    assert runner.invoke(app, ["--version"]).exit_code == 0
+    assert runner.invoke(app, ["projects", "list", "--help"]).exit_code == 0
 
 
 def test_intent_after_subcommand_is_an_error(monkeypatch) -> None:
@@ -132,9 +192,7 @@ def test_intent_after_subcommand_is_an_error(monkeypatch) -> None:
 
 
 def test_command_path_skips_intent_option(monkeypatch) -> None:
-    monkeypatch.setattr(
-        sys, "argv", ["sumcli", "--intent", "list projects", "config", "list"]
-    )
+    monkeypatch.setattr(sys, "argv", ["sumcli", "--intent", "list projects", "config", "list"])
     assert _command_from_argv() == ["config", "list"]
 
 
@@ -173,6 +231,37 @@ def test_client_sends_intent_header(monkeypatch) -> None:
         client.request("GET", "/v1/projects")
     assert captured["headers"][INTENT_HEADER] == "convert my weekly recap"
     assert captured["headers"]["Authorization"] == "Bearer tok"
+    Client.clear_token_cache()
+
+
+def test_cli_invocation_puts_intent_on_the_wire(monkeypatch) -> None:
+    """End-to-end: --intent reaches the outgoing header through the real CLI path.
+
+    The other header tests build a Client directly, so they cannot catch the
+    get_intent(ctx) wiring in commands.py being dropped.
+    """
+    Client.clear_token_cache()
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    monkeypatch.setattr(
+        "sum_cli.client.acquire_token",
+        lambda _cfg, _http: TokenResult("tok", time.monotonic() + 10_000),
+    )
+    captured: dict = {}
+
+    def fake_request(self, method: str, url: str, **kwargs: object) -> MagicMock:
+        captured.update(kwargs)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b"{}"
+        resp.json.return_value = {"data": []}
+        return resp
+
+    monkeypatch.setattr("httpx.Client.request", fake_request)
+    result = runner.invoke(app, ["--intent", "convert my weekly recap", "projects", "list"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["headers"][INTENT_HEADER] == "convert my weekly recap"
     Client.clear_token_cache()
 
 
