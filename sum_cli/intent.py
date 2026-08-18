@@ -19,6 +19,7 @@ flow instead of from inspecting argv — Click never runs a command body for
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from urllib.parse import quote
@@ -26,7 +27,9 @@ from urllib.parse import quote
 from sum_cli.output import emit_error, err, get_output_mode
 
 INTENT_ENV = "SUMCLI_INTENT"
+INTENT_DISABLED_ENV = "SUMCLI_NO_INTENT"
 INTENT_HEADER = "X-Summation-Intent"
+_TRUTHY = frozenset({"1", "true", "yes"})
 # Bytes on the wire, measured after percent-encoding: the cap exists to bound
 # what every request carries, and non-ASCII expands up to 4x once encoded.
 INTENT_MAX_LENGTH = 500
@@ -52,6 +55,15 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 # Warn once per process, like update_check does.
 _warned_missing = False
+
+
+def intent_disabled() -> bool:
+    """Org-level kill switch: never attach ``X-Summation-Intent``.
+
+    Same truthy set as ``SUMCLI_NO_UPDATE_CHECK``. Checked before the header is
+    attached, so ``--intent`` / ``SUMCLI_INTENT`` are ignored when this is set.
+    """
+    return os.environ.get(INTENT_DISABLED_ENV, "").strip().lower() in _TRUTHY
 
 
 def normalize_intent(raw: str | None) -> str | None:
@@ -167,6 +179,8 @@ def enforce_intent(intent: str | None, *, subcommand: str | None) -> None:
     command never sends, while `config list` beside it succeeded.
     """
     if subcommand in _INTENT_EXEMPT_SUBCOMMANDS:
+        return
+    if intent_disabled():
         return
     if intent is None:
         if intent_expected(subcommand=subcommand):

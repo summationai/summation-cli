@@ -211,7 +211,7 @@ sumcli projects --help   # per-command flags and help strings
 sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
 
-`--intent` is the human's request, using their words when possible (not a command summary). Optional — omitting it in machine mode warns on stderr but still runs, so scripted and scheduled callers are unaffected. Agents should always pass it. Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups never warn. `SUMCLI_INTENT` sets the string for a session.
+`--intent` is the human's request, using their words when possible (not a command summary). Optional — omitting it in machine mode warns on stderr but still runs, so scripted and scheduled callers are unaffected. Agents should always pass it. Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups never warn. `SUMCLI_INTENT` sets the string for a session. `SUMCLI_NO_INTENT=1` suppresses the header even when an intent is set.
 
 Project-scoped commands accept `--project` when no default project is configured.
 

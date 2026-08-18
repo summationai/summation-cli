@@ -32,7 +32,7 @@ sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **State intent** — always pass `--intent` as a root option before the subcommand on any command that reads or writes Summation data. Use the human's request **in their own words** — not a summary of the command you are running. The CLI does not fail without it (unattended pipelines have no ask to state), but it warns, and the run cannot be joined to a goal. You are an agent: you have the human's words, so send them. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to cover a whole session.
+2. **State intent** — always pass `--intent` as a root option before the subcommand on any command that reads or writes Summation data, unless `SUMCLI_NO_INTENT` is set (org kill switch: the header is not sent). Use the human's request **in their own words** — not a summary of the command you are running. The CLI does not fail without it (unattended pipelines have no ask to state), but it warns, and the run cannot be joined to a goal. You are an agent: you have the human's words, so send them. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to cover a whole session.
    - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
    - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
    - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external provider, not to sum-api.
@@ -414,7 +414,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_INTENT` (org kill switch: never send `X-Summation-Intent`), `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
 
 ## More detail
 

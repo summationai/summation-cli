@@ -13,7 +13,7 @@ import httpx
 from sum_cli import __version__, debug_log
 from sum_cli.auth import TokenResult, acquire_token, token_cache_valid
 from sum_cli.config import Config, load
-from sum_cli.intent import INTENT_HEADER, encode_intent_header
+from sum_cli.intent import INTENT_HEADER, encode_intent_header, intent_disabled
 
 
 class ApiError(RuntimeError):
@@ -104,6 +104,8 @@ class Client:
             debug_log.log_bearer_token(cached.access_token, operation="token(cache)")
             return cached
         debug_log.debug("acquiring token via %s", debug_log.token_source_label(self.cfg))
+        # Token exchange uses this client (User-Agent only). Intent is attached
+        # in `_headers`, which the auth path never calls.
         result = acquire_token(self.cfg, self._http)
         Client._token_cache[key] = result
         debug_log.log_bearer_token(result.access_token, operation="token(acquired)")
@@ -111,7 +113,7 @@ class Client:
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         h = {"Authorization": f"Bearer {self._token_result().access_token}"}
-        if self.intent:
+        if self.intent and not intent_disabled():
             h[INTENT_HEADER] = encode_intent_header(self.intent)
         if extra:
             h.update(extra)

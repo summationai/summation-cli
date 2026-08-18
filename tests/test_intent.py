@@ -17,6 +17,7 @@ from sum_cli.intent import (
     INTENT_HEADER,
     INTENT_MAX_LENGTH,
     encode_intent_header,
+    intent_disabled,
     intent_expected,
     normalize_intent,
 )
@@ -290,8 +291,38 @@ def _cfg() -> Config:
     )
 
 
+def test_intent_disabled_reads_truthy_env(monkeypatch) -> None:
+    monkeypatch.delenv("SUMCLI_NO_INTENT", raising=False)
+    assert intent_disabled() is False
+    for value in ("1", "true", "YES"):
+        monkeypatch.setenv("SUMCLI_NO_INTENT", value)
+        assert intent_disabled() is True, value
+    monkeypatch.setenv("SUMCLI_NO_INTENT", "0")
+    assert intent_disabled() is False
+
+
+def test_no_intent_env_skips_missing_warning(monkeypatch) -> None:
+    monkeypatch.setenv("SUMCLI_NO_INTENT", "1")
+    monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
+    monkeypatch.setattr("sum_cli.intent._warned_missing", False)
+    result = runner.invoke(app, ["projects", "list"])
+    assert "no --intent given" not in result.stderr
+    assert "INTENT" not in result.stdout
+
+
+def test_no_intent_env_skips_too_long_refusal(monkeypatch) -> None:
+    monkeypatch.setenv("SUMCLI_NO_INTENT", "1")
+    monkeypatch.setenv("SUMCLI_INTENT", "x" * (INTENT_MAX_LENGTH + 100))
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    result = runner.invoke(app, ["projects", "list"])
+    assert "INTENT_TOO_LONG" not in result.stdout
+
+
 def test_client_sends_intent_header(monkeypatch) -> None:
     Client.clear_token_cache()
+    monkeypatch.delenv("SUMCLI_NO_INTENT", raising=False)
     monkeypatch.setattr(
         "sum_cli.client.acquire_token",
         lambda _cfg, _http: TokenResult("tok", time.monotonic() + 10_000),
@@ -322,6 +353,7 @@ def test_cli_invocation_puts_intent_on_the_wire(monkeypatch) -> None:
     """
     Client.clear_token_cache()
     monkeypatch.delenv("SUMCLI_INTENT", raising=False)
+    monkeypatch.delenv("SUMCLI_NO_INTENT", raising=False)
     monkeypatch.setenv("SUMCLI_OUTPUT", "json")
     monkeypatch.setattr("sum_cli.intent.stdout_is_tty", lambda: False)
     monkeypatch.setattr(
@@ -364,5 +396,83 @@ def test_client_omits_intent_header_when_unset(monkeypatch) -> None:
     with Client(_cfg()) as client:
         client._http.request = fake_request
         client.request("GET", "/v1/projects")
+    assert INTENT_HEADER not in captured["headers"]
+    Client.clear_token_cache()
+
+
+def test_no_intent_env_omits_header_even_when_set(monkeypatch) -> None:
+    Client.clear_token_cache()
+    monkeypatch.setenv("SUMCLI_NO_INTENT", "1")
+    monkeypatch.setattr(
+        "sum_cli.client.acquire_token",
+        lambda _cfg, _http: TokenResult("tok", time.monotonic() + 10_000),
+    )
+    captured: dict = {}
+
+    def fake_request(method: str, url: str, **kwargs: object) -> MagicMock:
+        captured.update(kwargs)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b"{}"
+        resp.json.return_value = {}
+        return resp
+
+    with Client(_cfg(), intent="convert my weekly recap") as client:
+        client._http.request = fake_request
+        client.request("GET", "/v1/projects")
+    assert INTENT_HEADER not in captured["headers"]
+    Client.clear_token_cache()
+
+
+def test_m2m_token_exchange_omits_intent_header(monkeypatch) -> None:
+    """The auth-path M2M POST must not carry X-Summation-Intent."""
+    Client.clear_token_cache()
+    captured: dict = {}
+
+    def fake_post(self, url: str, **kwargs: object) -> MagicMock:
+        captured["url"] = url
+        captured["headers"] = dict(kwargs.get("headers") or {})
+        captured["client_headers"] = dict(self.headers)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "access_token": "m2m-tok",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        }
+        return resp
+
+    monkeypatch.setattr("httpx.Client.post", fake_post)
+    monkeypatch.setattr("sum_cli.auth.persist_m2m_session", lambda *_a, **_k: None)
+
+    with Client(_cfg(), intent="convert my weekly recap") as client:
+        assert client.token() == "m2m-tok"
+    assert captured["url"].endswith("/v1/auth/m2m/token")
+    assert INTENT_HEADER not in captured["headers"]
+    assert INTENT_HEADER not in captured["client_headers"]
+    Client.clear_token_cache()
+
+
+def test_cli_no_intent_env_keeps_header_off_the_wire(monkeypatch) -> None:
+    Client.clear_token_cache()
+    monkeypatch.setenv("SUMCLI_NO_INTENT", "1")
+    monkeypatch.setenv("SUMCLI_OUTPUT", "json")
+    monkeypatch.setattr(
+        "sum_cli.client.acquire_token",
+        lambda _cfg, _http: TokenResult("tok", time.monotonic() + 10_000),
+    )
+    captured: dict = {}
+
+    def fake_request(self, method: str, url: str, **kwargs: object) -> MagicMock:
+        captured.update(kwargs)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b"{}"
+        resp.json.return_value = {"data": []}
+        return resp
+
+    monkeypatch.setattr("httpx.Client.request", fake_request)
+    result = runner.invoke(app, ["--intent", "convert my weekly recap", "projects", "list"])
+    assert result.exit_code == 0, result.stdout
     assert INTENT_HEADER not in captured["headers"]
     Client.clear_token_cache()

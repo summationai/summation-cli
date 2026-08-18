@@ -339,6 +339,7 @@ Explicit `--project` always wins. When both file and env set a default, **the fi
 | `SUM_API_ACCESS_TOKEN` | Static bearer token (skips M2M exchange) |
 | `SUM_API_M2M_SCOPE` | Optional scope on M2M token request |
 | `SUMCLI_INTENT` | Default `--intent` (human's request, their words when possible) |
+| `SUMCLI_NO_INTENT` | Do not send `X-Summation-Intent`, even if `--intent` / `SUMCLI_INTENT` is set |
 | `SHAREPOINT_TENANT_ID` | Azure AD tenant for SharePoint app-only auth |
 | `SHAREPOINT_CLIENT_ID` | SharePoint app client id (falls back to `CLIENT_ID`) |
 | `SHAREPOINT_CLIENT_SECRET` | SharePoint app secret (falls back to `CLIENT_SECRET`) |
@@ -371,7 +372,7 @@ sumcli projects --help   # per-command flags and Typer help strings
 sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
 
-`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is sent to sum-api as `X-Summation-Intent`. It is optional: omitting it in machine mode (piped, or `--output json`) prints a warning on stderr and the command still runs, so unattended callers such as Dagster ops keep working. Agents should always pass it — without it a run cannot be joined to a goal. `SUMCLI_INTENT` sets the string for a session. `--intent` is a root option and must precede the subcommand.
+`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is sent to sum-api as `X-Summation-Intent`. It is optional: omitting it in machine mode (piped, or `--output json`) prints a warning on stderr and the command still runs, so unattended callers such as Dagster ops keep working. Agents should always pass it — without it a run cannot be joined to a goal. `SUMCLI_INTENT` sets the string for a session. `--intent` is a root option and must precede the subcommand. `SUMCLI_NO_INTENT=1` is an org-level kill switch: the header is not attached, the missing-intent warning is skipped, and an oversized value is not refused.
 
 No warning at all for: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external storage provider with that provider's credentials and never reaches sum-api. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding — so non-ASCII text gets fewer than 500 characters. An oversized intent is refused with `INTENT_TOO_LONG`, since that value would go on the wire.
 
