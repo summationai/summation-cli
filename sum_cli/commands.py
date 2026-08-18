@@ -12,6 +12,7 @@ import typer
 
 from sum_cli.client import Client
 from sum_cli.config import Config, load
+from sum_cli.intent import enforce_intent
 from sum_cli.output import action, emit_error, err, invalid_request, param
 from sum_cli.project_context import resolve_project
 
@@ -64,9 +65,27 @@ def get_config(ctx: typer.Context, profile: str | None = None) -> Config:
     return load(profile=profile)
 
 
+def get_intent(ctx: typer.Context) -> str | None:
+    """Resolved intent for this invocation. A plain getter — see ``checked_intent``."""
+    return getattr(ctx.obj, "intent", None) if ctx.obj is not None else None
+
+
+def checked_intent(ctx: typer.Context) -> str | None:
+    """Check the intent, then return it. Warns when absent; refuses only if oversized.
+
+    Called where a command actually reaches sum-api rather than from the root
+    callback. Click never runs a command body for ``--help``, so checking here makes
+    the help and discovery exemptions follow from control flow — no code has to
+    decide which argv token is a flag and which is an option value.
+    """
+    intent = get_intent(ctx)
+    enforce_intent(intent, subcommand=ctx.find_root().invoked_subcommand)
+    return intent
+
+
 @contextmanager
 def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
-    client = Client(cfg=get_config(ctx, profile))
+    client = Client(cfg=get_config(ctx, profile), intent=checked_intent(ctx))
     try:
         yield client
     finally:
@@ -77,6 +96,10 @@ def require_project(
     ctx: typer.Context,
     project: str | None = None,
 ) -> str:
+    # Check intent before resolving the project so the warning does not depend on
+    # whether a command resolves its project first. Warns once, so the later
+    # api_client call is a no-op.
+    checked_intent(ctx)
     resolved = resolve_project(get_config(ctx), explicit=project)
     if not resolved:
         emit_error(

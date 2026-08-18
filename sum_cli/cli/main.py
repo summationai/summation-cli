@@ -11,6 +11,7 @@ from sum_cli import __version__, debug_log
 from sum_cli.auth import AuthError
 from sum_cli.client import ApiError
 from sum_cli.config import Config, load
+from sum_cli.intent import resolve_intent
 from sum_cli.openapi_doc import (
     OpenApiSpecError,
     apply_openapi_help,
@@ -52,6 +53,7 @@ class CliContext:
     profile: str | None
     base_url: str | None
     verbose: bool = False
+    intent: str | None = None
 
     def config(self, *, profile: str | None = None) -> Config:
         return load(profile=profile or self.profile, base_url=self.base_url)
@@ -203,12 +205,26 @@ def _root(
         is_flag=True,
         help="Log auth/HTTP debug details to stderr (no secrets).",
     ),
+    intent: str = typer.Option(  # noqa: B008
+        None,
+        "--intent",
+        envvar="SUMCLI_INTENT",
+        help="The human's request, using their words when possible (not a "
+        "command summary). Optional, but strongly recommended for agents: "
+        "without it a run cannot be joined to a goal, and sumcli warns on "
+        'stderr. Example: --intent "convert my weekly recap".',
+    ),
 ) -> None:
     debug_log.set_verbose(verbose)
     # `output` is resolved by its eager callback (_output_callback) before this body
     # runs, so the mode is already set here; nothing more to do with it.
     del output
-    ctx.obj = CliContext(profile=profile, base_url=base_url, verbose=verbose)
+    # Normalize only. commands.checked_intent warns about a missing intent at the
+    # point a command actually calls sum-api — this callback also runs for
+    # discovery and --help, which must never be refused.
+    ctx.obj = CliContext(
+        profile=profile, base_url=base_url, verbose=verbose, intent=resolve_intent(intent)
+    )
     if ctx.invoked_subcommand != "update":
         warn_if_outdated()
     if ctx.invoked_subcommand is None:

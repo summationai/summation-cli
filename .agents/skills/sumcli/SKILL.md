@@ -47,18 +47,27 @@ The Summation plugin requires **sumcli ≥ 0.1.3**. Taking PyPI latest is always
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
-3. **Root options before subcommand**: `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
-5. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
-6. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
+2. **State intent** — always pass `--intent` as a root option before the subcommand on any command that reads or writes Summation data, unless `SUMCLI_NO_INTENT` is set (org kill switch: the header is not sent). Use the human's request **in their own words** — not a summary of the command you are running. The CLI does not fail without it (unattended pipelines have no ask to state), but it warns, and the run cannot be joined to a goal. You are an agent: you have the human's words, so send them. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to cover a whole session.
+   - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
+   - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
+   - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external provider, not to sum-api.
+   - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
+3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
+4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
+6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
+7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
+sumcli --intent "human's request" [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
 sumcli update    # root command: upgrade to the latest PyPI release
 ```
+
+`--intent` is optional but expected of agents. Omitting it in machine mode (piped, or `--output json`) prints a one-line warning on stderr and the command still runs — stdout stays a clean envelope. `SUMCLI_INTENT` covers a whole session. An intent over 500 bytes is refused, because that value would go on the wire.
+
+Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups do not need it, so the setup sequence below runs as written.
 
 Project-scoped commands accept `--project` when no default is set.
 
@@ -127,6 +136,9 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 ### CSV → queryable table
 
 ```bash
+# Set the intent once for the session, in the human's own words.
+export SUMCLI_INTENT="get my customer spreadsheet into a table I can query"
+
 # One-shot local ingest (recommended if file need not stay in project tree)
 sumcli tables import --local --path ./Customers.csv --table customers
 # NDJSON ends with importStatus SUCCESS + table_id (tbl-...)
@@ -138,6 +150,8 @@ sumcli catalog list
 sumcli queries run --sql 'SELECT * FROM customers LIMIT 5'
 sumcli queries run --sql 'SELECT * FROM customers' --limit 5
 ```
+
+Without `SUMCLI_INTENT`, pass `--intent "<the human's request>"` before the subcommand on each of these commands.
 
 Two-step (keep CSV in project files): `files upload` then `tables import --remote --path /Customers.csv --table customers`.
 
@@ -410,12 +424,12 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 - Success/validation: one JSON envelope (`ok`, `result` / `error`, often `next_actions`).
 - `--follow` / import streams: NDJSON lines; **last line** is terminal `result` or `error`.
-- Failures: exit **1**. Codes include `NO_PROJECT`, `CONFIRM_REQUIRED`, `INVALID_FLAGS`, `IMPORT_FAILED`, `INTERNAL_ERROR`.
+- Failures: exit **1**. Codes include `NO_PROJECT`, `CONFIRM_REQUIRED`, `INVALID_FLAGS`, `IMPORT_FAILED`, `INTENT_TOO_LONG`, `INTERNAL_ERROR`.
 - Human TTY view is lossy — never parse it; use JSON mode.
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_INTENT` (org kill switch: never send `X-Summation-Intent`), `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
 
 Read by the Summation plugin, not this CLI: `SUMCLI_NO_AUTO_INSTALL` (SessionStart auto-install opt-out).
 
