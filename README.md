@@ -40,13 +40,27 @@ so JSON/`jq` still parse. Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
 `sumcli update` upgrades a uv-managed install only; other origins (pip, pipx,
 brew) get a targeted error instead of a second copy on PATH.
 
-**curl bootstrap** (installs uv if needed, then `uv tool install summation-cli`):
+**Bootstrap** (installs uv if needed, then `uv tool install summation-cli`):
 
 ```bash
 curl -fsSL https://install.summation.com/sumcli | sh
-# Windows PowerShell:
-# irm https://install.summation.com/sumcli.ps1 | iex
 ```
+
+```powershell
+irm https://install.summation.com/sumcli.ps1 | iex
+```
+
+From **cmd.exe** (Windows Shell), launch the same PowerShell installer:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"
+```
+
+## Plugin compatibility
+
+The Summation plugin requires **sumcli ≥ 0.1.3**. Newer CLI releases are always compatible — `sumcli update` (PyPI latest) is the upgrade path. A plugin release that needs a higher floor will bump its own `minVersion`; this CLI does not pin an upper bound.
+
+`sumcli --version` prints a JSON envelope with `result.version` when stdout is not a TTY (or when `SUMCLI_OUTPUT=json`). That is the version string plugins should parse.
 
 ## Resources
 

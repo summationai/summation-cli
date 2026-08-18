@@ -92,7 +92,7 @@ Remove the first program, or put ${bin_dir} earlier on PATH."
 main() {
   case "$(uname -s)" in
     Darwin|Linux) ;;
-    *) err "unsupported OS: $(uname -s) (macOS/Linux only; for Windows use https://install.summation.com/sumcli.ps1)" ;;
+    *) err "unsupported OS: $(uname -s) (macOS/Linux only; for Windows use https://install.summation.com/sumcli.ps1 or sumcli.cmd)" ;;
   esac
 
   ensure_uv

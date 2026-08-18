@@ -27,6 +27,16 @@ Or bootstrap uv + install in one shot:
 curl -fsSL https://install.summation.com/sumcli | sh
 ```
 
+```powershell
+irm https://install.summation.com/sumcli.ps1 | iex
+```
+
+From cmd.exe:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"
+```
+
 Then:
 
 ```bash
@@ -38,6 +48,8 @@ A stderr notice appears when a newer version is on PyPI. Lookups are cached
 (a day on success, 15 minutes after a failed fetch).
 Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
 `sumcli update` upgrades a uv-managed install only.
+
+The Summation plugin requires **sumcli ≥ 0.1.3**. Newer releases are always compatible; `sumcli update` installs PyPI latest.
 
 ## Resources
 

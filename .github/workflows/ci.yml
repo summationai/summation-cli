@@ -36,3 +36,4 @@ jobs:
           sh tests/test_install.sh
           cmp scripts/install.sh docs/sumcli
           cmp scripts/install.ps1 docs/sumcli.ps1
+          cmp scripts/install.cmd docs/sumcli.cmd

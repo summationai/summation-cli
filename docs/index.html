@@ -29,6 +29,12 @@
     <code>irm https://install.summation.com/sumcli.ps1 | more</code>
     · <a href="/sumcli.ps1">view script</a>
   </p>
+  <h2>Windows (cmd.exe)</h2>
+  <pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"</code></pre>
+  <p class="tip">
+    Same installer as PowerShell; cmd.exe just launches it.
+    Or run <a href="/sumcli.cmd">sumcli.cmd</a>.
+  </p>
   <h2>Already have uv?</h2>
   <pre><code>uv tool install summation-cli</code></pre>
   <p>
