@@ -38,7 +38,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summ
 
 ## Plugin ↔ CLI version contract
 
-The Summation plugin requires **sumcli ≥ 0.1.3**. Taking PyPI latest is always compatible (`sumcli update`). Plugins parse `sumcli --version` (`SUMCLI_OUTPUT=json`; read `result.version`). If the binary is missing or below that floor, install with the matching bootstrap above, then `sumcli update`.
+The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always compatible (`sumcli update`). Plugins parse `sumcli --version` (`SUMCLI_OUTPUT=json`; read `result.version`). If the binary is missing or below that floor, install with the matching bootstrap above, then `sumcli update`.
 
 ## Agent rules
 

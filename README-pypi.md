@@ -49,7 +49,7 @@ A stderr notice appears when a newer version is on PyPI. Lookups are cached
 Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
 `sumcli update` upgrades a uv-managed install only.
 
-The Summation plugin requires **sumcli ≥ 0.1.3**. Newer releases are always compatible; `sumcli update` installs PyPI latest.
+The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always compatible; `sumcli update` installs PyPI latest.
 
 ## Resources
 
