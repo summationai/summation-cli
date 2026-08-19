@@ -10,15 +10,15 @@ from typing import Annotated
 
 import typer
 
-from sum_cli.output import emit, err, emit_error, ndjson, ok, truncate_list
 from sum_cli.commands import (
     ProfileOption,
     api_client,
-    require_confirm,
     api_confirm_params,
+    require_confirm,
     require_project,
     unwrap_data,
 )
+from sum_cli.output import emit, emit_error, err, ndjson, ok, truncate_list
 from sum_cli.streaming import exit_if_stream_failed
 from sum_cli.tempfiles import write_temp_bytes
 
@@ -283,6 +283,13 @@ def import_table(
     wait: Annotated[
         bool, typer.Option("--wait/--no-wait", help="Poll import until complete.")
     ] = True,
+    refresh: Annotated[
+        bool,
+        typer.Option(
+            "--refresh",
+            help="Re-import into an existing table, replacing its rows (sends confirm=true).",
+        ),
+    ] = False,
     separator: Annotated[str, typer.Option("--separator")] = ",",
     profile: ProfileOption = None,
 ) -> None:
@@ -400,12 +407,17 @@ def import_table(
             },
         )
         preview_data = unwrap_data(preview or {}, "data") or preview
+        # --refresh replaces the existing table's rows; the explicit flag is the
+        # user's confirmation, so the CLI sends the API's required confirm=true.
+        # Without it the import is NEW: the pipeline refuses a name collision.
         created = c.request(
             "POST",
             "/v1/table-imports",
+            params={"confirm": "true"} if refresh else None,
             json={
                 "asset_id": asset_id,
                 "table_name": table_name,
+                "import_type": "FULL_REFRESH" if refresh else "NEW",
                 "column_mappings": [],
             },
         )

@@ -5,8 +5,8 @@ from __future__ import annotations
 import io
 import json
 import sys
-from pathlib import Path
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,3 +261,63 @@ def test_tables_import_wait_failed_status_exits_nonzero(monkeypatch, tmp_path: P
     assert last["type"] == "error"
     assert last["ok"] is False
     assert last["error"]["code"] == "IMPORT_FAILED"
+
+
+def test_tables_import_refresh_sends_full_refresh_and_confirm(monkeypatch, tmp_path: Path) -> None:
+    """--refresh replaces an existing table's rows: the API requires confirm=true
+    for FULL_REFRESH, and the explicit flag is the user's confirmation."""
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--refresh",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.args[1] == "/v1/table-imports"
+    assert post.kwargs["params"] == {"confirm": "true"}
+    assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
+
+
+def test_tables_import_default_is_new_without_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            ["tables", "import", "--table", "t1", "--local", "--path", str(csv), "--no-wait"],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.args[1] == "/v1/table-imports"
+    assert not post.kwargs.get("params")
+    assert post.kwargs["json"]["import_type"] == "NEW"
