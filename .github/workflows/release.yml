@@ -134,6 +134,9 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job does not check out the repo, so gh cannot infer the target
+          # from git. Name it explicitly.
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="${{ github.ref_name }}"
           title="v${{ needs.test-and-build.outputs.version }}"
