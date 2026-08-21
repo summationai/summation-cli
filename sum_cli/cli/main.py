@@ -114,14 +114,48 @@ def _version_callback(value: bool) -> None:
 
 
 def _api_error_fields(body: object) -> tuple[str, str]:
-    message = str(body)
-    code = "API_ERROR"
+    """Extract (code, message) from an API error body, always as strings.
+
+    Neither field is guaranteed to be a string on the wire: FastAPI's 422 sends
+    ``detail`` as a list of validation objects. Callers format and match on these,
+    so coerce here rather than letting a non-string reach them.
+    """
+    message: object = str(body)
+    code: object = "API_ERROR"
     if isinstance(body, dict):
         err_obj = body.get("error") or body
         if isinstance(err_obj, dict):
             message = err_obj.get("message") or err_obj.get("detail") or message
             code = err_obj.get("code") or code
-    return code, message
+    return _as_error_text(code, "API_ERROR"), _as_error_text(message, str(body))
+
+
+def _as_error_text(value: object, fallback: str) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return fallback
+    # A 422 detail list carries one entry per invalid field; join their ``msg``
+    # values with the field path so the user sees what to fix, not a raw repr.
+    if isinstance(value, list):
+        parts = [_validation_detail_text(item) for item in value]
+        joined = "; ".join(part for part in parts if part)
+        return joined or fallback
+    return str(value)
+
+
+def _validation_detail_text(item: object) -> str:
+    if not isinstance(item, dict):
+        return str(item)
+    msg = item.get("msg")
+    if not isinstance(msg, str):
+        return str(item)
+    # loc is like ["body", "datasets", 0]; drop the leading location kind.
+    loc = item.get("loc")
+    if isinstance(loc, list) and len(loc) > 1:
+        field = ".".join(str(part) for part in loc[1:])
+        return f"{field}: {msg}"
+    return msg
 
 
 def _api_error_guidance(*, status: int, code: str, message: str) -> tuple[str, list]:
