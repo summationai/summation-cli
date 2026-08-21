@@ -54,7 +54,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always
    - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
 3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
 6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
 7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
@@ -125,7 +125,8 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |
 | `reports` | generate/verify (`.sdoc`); default `--follow` on |
 | `playbooks` | discovery only (`list`, `show`) — **read-only**; author and edit via `chats` |
-| `schedules` | recurring playbook runs (CRUD, pause/resume, run now, run history) |
+| `schedules` | recurring playbook runs (CRUD, pause/resume, run now, run history); create may 403 `use_workflows` |
+| `workflows` | multi-step automations (typed graphs): list/show/create/update, activate, versions, runs, run now, node-types |
 | `files` | project file upload/download/list/delete |
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
 | `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
@@ -346,11 +347,45 @@ sumcli files list --project prj-... --count 100 | jq -r '.result.files[] | "\(.k
 7. **Iterate through the same chat.** Use `chats reply --chat <id>` so the agent keeps the full constraint history. A fresh `chats create` loses that context and re-litigates decisions.
 8. **Remember the row cap.** `queries` caps at **10,000 rows per request** (`QueryExecutionRequest.limit` maximum); the agent's own SQL tool caps higher. Neither can be raised. If a source exceeds the cap, the playbook must paginate — say so up front rather than letting a run discover it.
 
-**Triggering.** There is no `sumcli playbooks run`. Options: run it in the web app, ask in chat (*"run the X playbook"*), or create a schedule and call `sumcli schedules run` — see below.
+**Triggering.** There is no `sumcli playbooks run`. Options: run it in the web app, ask in chat (*"run the X playbook"*), create a schedule and call `sumcli schedules run`, or (when the tenant has workflows) create a workflow and call `sumcli workflows run` — see below.
+
+### Workflows (typed graphs)
+
+A workflow is a scheduled multi-step automation: triggers, a typed graph (playbook + delivery nodes), activate, then run. **Feature-gated** — ungated tenants get `403 feature_not_enabled`. Writes need a user-context session (not M2M-only). No delete; archive via `--status archived` on update.
+
+```bash
+# See which node type ids this org may put in a graph
+sumcli workflows node-types | jq '.result.node_types'
+
+# Author graph.json ({"nodes":[...],"edges":[...]}) and triggers.json (array) from those types
+sumcli workflows create --project prj-... --title "Weekly board" \
+  --graph-file graph.json --triggers-file triggers.json
+
+sumcli workflows list --project prj-... | jq '.result.workflows'
+WF=$(sumcli workflows list --project prj-... | jq -r '.result.workflows[0].id')
+REV=$(sumcli workflows show "$WF" | jq -r '.result.workflow.revision')
+
+sumcli workflows update "$WF" --expected-revision "$REV" --title "Weekly board v2"
+# Prefer --body-file from a prior show for a full GET→PUT round-trip
+
+sumcli workflows activate "$WF" --expected-revision "$REV" --confirm   # freezes the live version
+sumcli workflows versions "$WF"
+sumcli workflows run "$WF" --confirm   # --version defaults from activeVersionId; sends delivery
+sumcli workflows runs "$WF"
+sumcli workflows run-show "$WF" run_...
+```
+
+**Best practices**
+
+1. **Build graphs only from `node-types`.** Config keys the catalog does not name are refused.
+2. **Draft → activate is how you go live.** `create`/`update` never make a workflow active; `activate` freezes the version schedules and `run` use.
+3. **`activate` and `run` need `--confirm`.** Both can send real email/Slack. `run` is idempotent on `--request-id` (UUID); omit it to get a fresh one, echo it from the result for retries.
+4. **Optimistic concurrency.** Pass `--expected-revision` from the last `show`; a stale revision 409s and applies nothing.
+5. **When `schedules create` returns 403 `use_workflows`**, author the cadence as a workflow instead (`node-types` → `create` → `activate`). Existing schedules stay fully usable (list/show/pause/resume/run).
 
 ### Scheduled playbook runs
 
-Run a playbook on a cadence and email the output. **Schedules target playbooks only** — to schedule a report, first save the work as a playbook, then schedule that.
+Run a playbook on a cadence and email the output. **Schedules target playbooks only** — to schedule a report, first save the work as a playbook, then schedule that. On tenants with workflows enabled, `schedules create` returns `403 use_workflows` and points at `POST /v1/workflows` — use the workflows section above.
 
 ```bash
 # Playbook ids come back as fileId (NOT id) and look like file-...

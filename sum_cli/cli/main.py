@@ -44,6 +44,7 @@ from sum_cli.resources import (
     tables,
     tenant,
     views,
+    workflows,
 )
 from sum_cli.update_check import run_upgrade, warn_if_outdated
 
@@ -73,6 +74,7 @@ app.add_typer(chats.app, name="chats")
 app.add_typer(reports.app, name="reports")
 app.add_typer(playbooks.app, name="playbooks")
 app.add_typer(schedules.app, name="schedules")
+app.add_typer(workflows.app, name="workflows")
 app.add_typer(files.app, name="files")
 app.add_typer(filesystem.app, name="filesystem")
 app.add_typer(catalog.app, name="catalog")

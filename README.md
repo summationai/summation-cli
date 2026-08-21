@@ -73,7 +73,8 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer CLI releases are alway
 | `chats` | Addison conversations; SSE → NDJSON with `--follow` on create/reply |
 | `reports` | Generate and verify reports (`.sdoc`); file ops via `files` |
 | `playbooks` | Playbook discovery |
-| `schedules` | Recurring playbook runs (CRUD, `pause`/`resume`, `run`, `runs`) |
+| `schedules` | Recurring playbook runs (CRUD, `pause`/`resume`, `run`, `runs`); create may require workflows |
+| `workflows` | Multi-step automations (typed graphs: create/update/activate/run, versions, node-types) |
 | `files` | Project-scoped files (`upload`, `download`, `list`, `delete`) |
 | `filesystem` | Connected filesystem roots such as SharePoint |
 | `catalog` | Project catalog entries (tables/views attached to a project) |
@@ -208,7 +209,7 @@ sumcli tables delete --confirm tbl-...                          # remove from gr
 
 ### Scheduled playbook runs
 
-Schedules target **playbooks only** — `kind` is `playbook` in the API. Playbook ids come back as `fileId` from `playbooks list`.
+Schedules target **playbooks only** — `kind` is `playbook` in the API. Playbook ids come back as `fileId` from `playbooks list`. On tenants with workflows enabled, `schedules create` may return `403 use_workflows` — use `workflows` instead (existing schedules remain usable).
 
 ```bash
 sumcli schedules create --project prj-... --playbook file-... \
@@ -225,6 +226,19 @@ sumcli schedules delete schedule_... --confirm
 `--type` accepts `cron`, `interval`, `one_time`, `daily`, `weekly`, `biweekly`, `monthly`, `month_end`, and `yearly`. Supply the fields each type needs: `--cron`, `--every-minutes`, `--run-date`, `--day`, `--day-of-month`, `--month`.
 
 > **Note:** `PUT /v1/schedules/{id}` replaces the whole schedule, so `schedules update` re-sends every **cadence** flag. **Config is preserved**: the command reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you omit them. This merge is deliberate — `email_recipients`, `params`, and `output_config` have no server-side default, so a cadence-only update would otherwise stop all email delivery.
+
+### Workflows
+
+Typed-graph automations under `/v1/workflows` (feature-gated). Author `graph.json` / `triggers.json` from `workflows node-types`, then create → activate → run.
+
+```bash
+sumcli workflows node-types
+sumcli workflows create --project prj-... --title "Weekly" \
+  --graph-file graph.json --triggers-file triggers.json
+sumcli workflows activate wf_... --expected-revision N --confirm
+sumcli workflows run wf_... --confirm   # --version from activeVersionId when omitted
+sumcli workflows runs wf_...
+```
 
 ### Long-running operations
 
@@ -421,7 +435,7 @@ Command-tree action blurbs for API-backed commands are derived from the snapshot
 # Typer group help= or command docstrings in resource modules.
 - OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`).
 - No imports from sum-api service code or gRPC clients.
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` is gated because a manual run delivers real email immediately; the refusal names the recipients first.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

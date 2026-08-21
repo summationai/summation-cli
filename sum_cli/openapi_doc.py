@@ -103,6 +103,40 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("PUT", "/v1/tables/*/rows"): "Row replace not exposed in sumcli.",
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
+    # Sandbox-only (relative to prior prod snapshot) — not part of workflows coverage.
+    ("GET", "/v1/connections/data/types"): "Data connector type catalog not exposed in sumcli.",
+    ("GET", "/v1/connections/data/types/*"): "Data connector type detail not exposed in sumcli.",
+    (
+        "PATCH",
+        "/v1/connections/data/*/datasets/*",
+    ): "Connection dataset update not exposed in sumcli.",
+    (
+        "DELETE",
+        "/v1/connections/data/*/datasets/*",
+    ): "Connection dataset detach not exposed in sumcli.",
+    ("GET", "/v1/data-syncs/*/checkpoint"): "Data-sync checkpoint not exposed in sumcli.",
+    ("POST", "/v1/data-syncs/*/pages"): "Data-sync page upload not exposed in sumcli.",
+    ("GET", "/v1/data-syncs/*/pages/*"): "Data-sync page status not exposed in sumcli.",
+    (
+        "POST",
+        "/v1/tables/*/ingestion-batches",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "GET",
+        "/v1/tables/*/ingestion-batches/*",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "DELETE",
+        "/v1/tables/*/ingestion-batches/*",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "POST",
+        "/v1/tables/*/ingestion-batches/*/commit",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "POST",
+        "/v1/tables/*/ingestion-batches/*/parts/*/upload-url",
+    ): "Table ingestion batches not exposed in sumcli.",
 }
 
 
@@ -549,6 +583,7 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "reports": "Generate and verify reports (.sdoc). List/download/delete via files.",
     "playbooks": "Playbook discovery.",
     "schedules": "Recurring playbook schedules and their runs.",
+    "workflows": "Multi-step automations (typed graphs): create, activate, and run.",
     "files": "Project-scoped files.",
     "filesystem": "External storage providers (SharePoint).",
     "catalog": "Project catalog entries (tables/views attached to project).",
@@ -618,6 +653,24 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         # email immediately, which is why the command is confirm-gated.
         "run": "Run a schedule now, delivering its output and email (--confirm).",
         "delete": "Delete a schedule (--confirm).",
+    },
+    "workflows": {
+        # PUT is a full replace for triggers; the CLI keeps existing triggers unless
+        # --triggers-file is set, and supports --body-file for GET→PUT round-trips.
+        "update": (
+            "Replace a workflow's editable state (--expected-revision). "
+            "Keeps existing triggers unless --triggers-file is set; "
+            "optional --body-file for a show/GET round-trip."
+        ),
+        "activate": (
+            "Freeze the current graph as the running version (--expected-revision, --confirm)."
+        ),
+        "run": (
+            "Run a workflow now (--confirm); --version defaults from activeVersionId; "
+            "--request-id is an idempotency UUID."
+        ),
+        "run-show": "Show one workflow run's per-step detail.",
+        "node-types": "List node type ids and configs this organization may author.",
     },
     "tables": {
         "import": "Import from local file (multi-step; --wait/--no-wait).",
