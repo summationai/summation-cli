@@ -137,7 +137,8 @@ TriggersFileOption = Annotated[
     Path | None,
     typer.Option(
         "--triggers-file",
-        help="JSON array of schedule triggers. On update, omit to keep existing triggers.",
+        help="JSON array of schedule triggers. On update, omit the flag to keep "
+        "triggers from show/GET; an empty array deletes them all.",
     ),
 ]
 ExpectedRevisionOption = Annotated[
@@ -278,21 +279,45 @@ def update_workflow(
             f"Use one of: {', '.join(_UPDATE_STATUSES)}.",
         )
 
-    base: dict = {}
+    # Validate local files before any HTTP call (same ordering as create / schedules).
+    body_doc: dict | None = None
+    if body_file is not None:
+        body_doc = _unwrap_workflow_document(
+            load_json_object(body_file, "--body-file", shape_hint='{"title": "..."}')
+        )
+    graph_override: dict | None = None
+    if graph_file is not None:
+        graph_override = load_json_object(
+            graph_file, "--graph-file", shape_hint='{"nodes": [], "edges": []}'
+        )
+    triggers_override: list | None = None
+    if triggers_file is not None:
+        triggers_override = _load_json_array(
+            triggers_file, "--triggers-file", shape_hint="[{...}]"
+        )
+
     with api_client(ctx, profile) as c:
-        if body_file is not None:
-            base = _unwrap_workflow_document(
-                load_json_object(body_file, "--body-file", shape_hint='{"title": "..."}')
-            )
+        if body_doc is not None:
+            base = body_doc
         else:
             existing = c.request("GET", f"/v1/workflows/{workflow_id}")
             current = unwrap_data(existing or {}, "data") or existing
-            if isinstance(current, dict):
-                base = current
+            if not isinstance(current, dict) or not current:
+                invalid_request(
+                    f"Workflow {workflow_id} could not be loaded for update.",
+                    "Pass --body-file from `sumcli workflows show`, "
+                    "or retry when the API returns the workflow.",
+                )
+            base = current
 
         resolved_project = project or _field(base, "project_id", "projectId")
         if not isinstance(resolved_project, str) or not resolved_project:
-            resolved_project = require_project(ctx, project)
+            # Do not fall back to the profile default project: that value is unrelated
+            # to this workflow and a full-replace PUT would reassign it.
+            invalid_request(
+                f"Workflow {workflow_id} has no project id to reuse.",
+                "Pass --project with the id from `sumcli workflows show`, or provide --body-file.",
+            )
 
         resolved_title = title or _field(base, "title")
         if not isinstance(resolved_title, str) or not resolved_title:
@@ -301,18 +326,16 @@ def update_workflow(
                 "Pass --title or provide one via --body-file / an existing show payload.",
             )
 
-        if triggers_file is not None:
-            triggers: list | None = _load_json_array(
-                triggers_file, "--triggers-file", shape_hint="[{...}]"
-            )
+        if triggers_override is not None:
+            triggers: list | None = triggers_override
         else:
             existing_triggers = _field(base, "triggers")
-            triggers = existing_triggers if isinstance(existing_triggers, list) else []
+            # A missing triggers key must not become [] — that deletes every schedule.
+            # Only echo a list the GET/body actually carried.
+            triggers = existing_triggers if isinstance(existing_triggers, list) else None
 
-        if graph_file is not None:
-            graph: dict | None = load_json_object(
-                graph_file, "--graph-file", shape_hint='{"nodes": [], "edges": []}'
-            )
+        if graph_override is not None:
+            graph: dict | None = graph_override
         elif body_file is not None:
             existing_graph = _field(base, "graph")
             graph = existing_graph if isinstance(existing_graph, dict) else None
@@ -320,8 +343,10 @@ def update_workflow(
             # Flag-only update: leave the stored graph untouched unless --graph-file.
             graph = None
 
+        # description and output_folder default to "" on the wire — omitting them resets
+        # them. Carry both forward from the GET/body whenever the caller did not pass a flag.
         resolved_description = description
-        if resolved_description is None and body_file is not None:
+        if resolved_description is None:
             desc = _field(base, "description")
             resolved_description = desc if isinstance(desc, str) else None
 
@@ -331,7 +356,7 @@ def update_workflow(
             resolved_status = st if isinstance(st, str) else None
 
         resolved_folder = output_folder
-        if resolved_folder is None and body_file is not None:
+        if resolved_folder is None:
             folder = _field(base, "output_folder", "outputFolder")
             resolved_folder = folder if isinstance(folder, str) else None
 

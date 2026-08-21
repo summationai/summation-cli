@@ -659,8 +659,8 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         # --triggers-file is set, and supports --body-file for GET→PUT round-trips.
         "update": (
             "Replace a workflow's editable state (--expected-revision). "
-            "Keeps existing triggers unless --triggers-file is set; "
-            "optional --body-file for a show/GET round-trip."
+            "Carries description, output folder, and triggers from show/GET "
+            "unless overridden; optional --body-file for a full round-trip."
         ),
         "activate": (
             "Freeze the current graph as the running version (--expected-revision, --confirm)."

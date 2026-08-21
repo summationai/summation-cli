@@ -135,6 +135,8 @@ def test_update_merges_existing_triggers_and_requires_revision() -> None:
             "id": "wf_1",
             "projectId": "proj_1",
             "title": "Old",
+            "description": "Quarterly board deck summary",
+            "outputFolder": "/Reports",
             "triggers": [{"id": "tr_1", "type": "schedule"}],
             "revision": 3,
         }
@@ -160,7 +162,80 @@ def test_update_merges_existing_triggers_and_requires_revision() -> None:
     assert payload["project_id"] == "proj_1"
     assert payload["expected_revision"] == 3
     assert payload["triggers"] == [{"id": "tr_1", "type": "schedule"}]
+    # Fields with default "" must be carried over or a rename resets them.
+    assert payload["description"] == "Quarterly board deck summary"
+    assert payload["output_folder"] == "/Reports"
     assert "graph" not in payload
+    assert "status" not in payload
+
+
+def test_update_omits_triggers_when_get_has_no_triggers_key() -> None:
+    """Missing triggers must not become [] — that deletes every schedule."""
+    existing = {
+        "data": {
+            "id": "wf_1",
+            "projectId": "proj_1",
+            "title": "Old",
+            "revision": 3,
+        }
+    }
+    result, client = _run(
+        ["workflows", "update", "wf_1", "--expected-revision", "3", "--title", "New"],
+        existing,
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = client.request.call_args_list[1][1]["json"]
+    assert "triggers" not in payload
+
+
+def test_update_refuses_empty_get_rather_than_default_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty GET must not PUT the profile default project_id onto the workflow."""
+    from sum_cli.config_store import write_all
+
+    cfg_file = tmp_path / "config"
+    write_all(
+        cfg_file,
+        {
+            "default": {
+                "base_url": "https://example.com",
+                "access_token": "test-token",
+                "default_project": "prj-default-unrelated",
+            }
+        },
+    )
+    monkeypatch.setenv("SUMMATION_CONFIG_FILE", str(cfg_file))
+
+    result, client = _run(
+        ["workflows", "update", "wf_1", "--expected-revision", "3", "--title", "New"],
+        None,
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["ok"] is False
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    # GET was attempted; PUT must not run with the unrelated default project.
+    assert client.request.call_count == 1
+    assert client.request.call_args[0] == ("GET", "/v1/workflows/wf_1")
+
+
+def test_update_rejects_bad_graph_file_before_http(tmp_path: Path) -> None:
+    missing = tmp_path / "nope.json"
+    result, client = _run(
+        [
+            "workflows",
+            "update",
+            "wf_1",
+            "--expected-revision",
+            "1",
+            "--graph-file",
+            str(missing),
+        ]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
+    client.request.assert_not_called()
 
 
 def test_update_body_file_round_trip(tmp_path: Path) -> None:
