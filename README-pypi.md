@@ -71,7 +71,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always co
 | `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
 | `tables`      | Grid tables and CSV import (`tables import` is a multi-step HTTP workflow); also `append`, `data`, `import-status`, `catalog-show`, `catalog-update` |
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
-| `grid`        | Grid `status`, `create`, `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
+| `grid`        | Grid `status`, `create` (`--kind calc`/`data`), `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
 | `queries`     | Read-only SQL execution (`queries run`)                                                                                                              |
 
 
@@ -158,6 +158,35 @@ sumcli tables import --remote --path /Customers.csv --table customers
 ```
 
 Step 2 also accepts `--file-id file-...` if you have the ID directly.
+
+### Empty appendable data table
+
+When your code owns the rows — app state, an operator log, a suppression list — create
+an empty **data** table from a column schema instead of deriving one from existing data:
+
+```bash
+sumcli grid create ops_log --kind data \
+  --column event_id:uuid:notnull \
+  --column op:string \
+  --column count:integer \
+  --key-column event_id
+```
+
+Each `--column` is `name:type[:null|notnull]`, order kept. Types: `string`, `integer`,
+`decimal`, `big_decimal`, `boolean`, `date`, `datetime`, `json`, `uuid`. Nullable unless
+`:notnull`. For a longer schema use `--columns-file cols.json` (a JSON array of
+`{"name", "type", "nullable"}` objects). The table accepts rows immediately:
+
+```bash
+sumcli tables append tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+```
+
+`--key-column` names the business key used to match rows on upsert, not the physical
+primary key: every data table already has an integer `s_id` primary key and a created-at
+timestamp added for you. Max 50 columns per create.
+
+> **Note:** data-table creation is gated per environment and may return
+> `not_implemented`. `--kind calc` (the default, `--query`-defined) is unaffected.
 
 ### Existing project file → grid table
 

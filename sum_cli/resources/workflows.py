@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -13,6 +12,7 @@ from sum_cli.commands import (
     ProfileOption,
     api_client,
     extract_list,
+    load_json_array,
     load_json_object,
     require_project,
     unwrap_data,
@@ -26,25 +26,6 @@ _UPDATE_STATUSES = ("draft", "active", "paused", "archived")
 _DEFAULT_PAGE_SIZE = 25
 _MAX_PAGE_SIZE = 100
 _DEFAULT_RUN_PAGE_SIZE = 5
-
-
-def _load_json_array(path: Path, flag: str, *, shape_hint: str) -> list:
-    """Read a JSON array from ``path``, reporting failures as INVALID_REQUEST."""
-    try:
-        parsed = json.loads(path.read_text())
-    except UnicodeDecodeError as exc:
-        invalid_request(
-            f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON."
-        )
-    except ValueError as exc:
-        invalid_request(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON array in {flag}.")
-    except OSError as exc:
-        invalid_request(
-            f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
-        )
-    if not isinstance(parsed, list):
-        invalid_request(f"{flag} must contain a JSON array.", f"Use an array, e.g. {shape_hint}.")
-    return parsed
 
 
 def _unwrap_workflow_document(raw: dict) -> dict:
@@ -228,7 +209,7 @@ def create_workflow(
         else None
     )
     triggers = (
-        _load_json_array(triggers_file, "--triggers-file", shape_hint="[{...}]")
+        load_json_array(triggers_file, "--triggers-file", shape_hint="[{...}]")
         if triggers_file is not None
         else None
     )
@@ -294,7 +275,7 @@ def update_workflow(
         )
     triggers_override: list | None = None
     if triggers_file is not None:
-        triggers_override = _load_json_array(
+        triggers_override = load_json_array(
             triggers_file, "--triggers-file", shape_hint="[{...}]"
         )
 

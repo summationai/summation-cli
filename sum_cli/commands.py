@@ -51,6 +51,29 @@ def load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
     return parsed
 
 
+def load_json_array(path: Path, flag: str, *, shape_hint: str) -> list:
+    """Read a JSON array from ``path``, reporting every failure as INVALID_REQUEST.
+
+    The array counterpart of :func:`load_json_object`; ``shape_hint`` is an example
+    of the expected array, shown when the file parses but is not one.
+    """
+    try:
+        parsed = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
+        invalid_request(
+            f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON."
+        )
+    except ValueError as exc:
+        invalid_request(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON array in {flag}.")
+    except OSError as exc:
+        invalid_request(
+            f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
+        )
+    if not isinstance(parsed, list):
+        invalid_request(f"{flag} must contain a JSON array.", f"Use an array, e.g. {shape_hint}.")
+    return parsed
+
+
 _SET_CONTEXT = action(
     "Set default project for active profile",
     "sumcli config set-project --project <project-id>",

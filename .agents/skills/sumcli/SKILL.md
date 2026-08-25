@@ -130,7 +130,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `files` | project file upload/download/list/delete |
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
 | `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
-| `grid` | status, sync, lineage, push |
+| `grid` | status, sync, lineage, push, `create` (calc table from a query, or empty data table from columns) |
 
 ## Common workflows
 
@@ -157,6 +157,38 @@ Without `SUMCLI_INTENT`, pass `--intent "<the human's request>"` before the subc
 Two-step (keep CSV in project files): `files upload` then `tables import --remote --path /Customers.csv --table customers`.
 
 After import, **attach** before the table appears in `catalog list` / project queries. `tables delete` does not auto-detach — run `catalog detach` separately.
+
+### Agent-owned data table (append-only state)
+
+Use this when the rows come from your own code — app state, an op-log, a suppression
+list — rather than from a file or an existing query. `--kind data` creates the table
+empty and it accepts appends right away.
+
+```bash
+sumcli grid create ops_log --kind data \
+  --column event_id:uuid:notnull \
+  --column op:string \
+  --column count:integer \
+  --key-column event_id
+
+sumcli tables append tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+```
+
+Rules the API enforces, checked locally first so a wrong schema costs no round trip:
+
+- `--column` is `name:type[:null|notnull]`; order is kept, nullable is the default.
+- Types: `string`, `integer`, `decimal`, `big_decimal`, `boolean`, `date`, `datetime`,
+  `json`, `uuid`. Nothing else.
+- Do **not** declare `s_id` or any `_sm_*` column — the row store adds an integer `s_id`
+  primary key and a created-at timestamp itself.
+- `--key-column` is the **business key** matched on upsert, not the primary key, and must
+  name a column you declared.
+- 50 columns max per create. Use `--columns-file <path>` (JSON array) for a long schema.
+- `--query` and `--column` are mutually exclusive: `--kind calc` takes a query,
+  `--kind data` takes columns.
+
+If the create returns `not_implemented`, data tables are gated off for that environment;
+`--kind calc` still works.
 
 ### Data connections (add, verify, remove)
 
