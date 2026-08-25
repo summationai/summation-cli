@@ -202,6 +202,48 @@ def test_invalid_input_is_refused_before_any_request(args: list[str], fragment: 
     client.request.assert_not_called()
 
 
+def test_empty_query_is_refused_under_kind_data() -> None:
+    """An explicitly-typed --query "" must be reported, not silently dropped.
+
+    Truthiness would treat it as absent and build a data payload as though the flag were
+    never passed, leaving "why was my query ignored?" unanswered.
+    """
+    result, client = _run(
+        ["grid", "create", "t", "--kind", "data", "--query", "", "--column", "a:string"]
+    )
+    assert result.exit_code != 0
+    assert "--query is not allowed with --kind data" in _error(result)["error"]["message"]
+    client.request.assert_not_called()
+
+
+def test_duplicate_columns_are_refused_before_keys_resolve() -> None:
+    """The duplicate check must run before key resolution, which is case-insensitive.
+
+    Were the order reversed, --key-column a and A would collapse to one key and the table
+    would be created with a business key the caller did not ask for.
+    """
+    result, client = _run(
+        [
+            "grid",
+            "create",
+            "t",
+            "--kind",
+            "data",
+            "--column",
+            "a:string",
+            "--column",
+            "A:integer",
+            "--key-column",
+            "a",
+            "--key-column",
+            "A",
+        ]
+    )
+    assert result.exit_code != 0
+    assert "Duplicate column name" in _error(result)["error"]["message"]
+    client.request.assert_not_called()
+
+
 def test_column_and_columns_file_together_are_refused(tmp_path: Path) -> None:
     path = tmp_path / "cols.json"
     path.write_text(json.dumps([{"name": "a", "type": "string"}]))

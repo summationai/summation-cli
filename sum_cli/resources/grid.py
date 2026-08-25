@@ -104,7 +104,12 @@ def _validate_columns(columns: list[dict]) -> None:
 
 
 def _resolve_key_columns(key_column: list[str], columns: list[dict]) -> list[str]:
-    """Rewrite each key to its column's own spelling; the API matches keys case-sensitively."""
+    """Rewrite each key to its column's own spelling; the API matches keys case-sensitively.
+
+    Call only after :func:`_validate_columns`. The lookup below is keyed on the lowercased
+    name, so two columns differing just in case would collapse to one entry and silently
+    merge two distinct keys into one. Rejecting duplicates first is what makes that safe.
+    """
     declared = {col["name"].lower(): col["name"] for col in columns}
     resolved: list[str] = []
     for key in key_column:
@@ -197,7 +202,10 @@ def _build_create_payload(
             )
         return {"name": name, "kind": "calc", "query": query}
 
-    if query:
+    # ``is not None``, not truthiness: --query "" is a flag the caller typed, and dropping
+    # it silently would answer "why was my query ignored?" with nothing. The calc branch
+    # above keeps its falsy test because a required field refuses an empty value anyway.
+    if query is not None:
         invalid_request(
             "--query is not allowed with --kind data.",
             "A data table is defined by columns. Drop --query, or use --kind calc.",
@@ -216,6 +224,8 @@ def _build_create_payload(
             "--kind data needs at least one column.",
             "Pass --column name:type (repeatable) or --columns-file <path>.",
         )
+    # Order matters: _resolve_key_columns keys its lookup on the lowercased name, so the
+    # duplicate check has to have run already. See its docstring.
     _validate_columns(columns)
 
     payload = {"name": name, "kind": "data", "columns": columns}
