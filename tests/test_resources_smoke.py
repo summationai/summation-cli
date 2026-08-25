@@ -93,6 +93,12 @@ def test_config_set_project_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
             id="playbooks-list",
         ),
         pytest.param(
+            ["workflows", "list", "--project", "proj_1"],
+            "sum_cli.resources.workflows",
+            {"data": {"workflows": []}},
+            id="workflows-list",
+        ),
+        pytest.param(
             ["connections", "list"],
             "sum_cli.resources.connections",
             {"data": []},

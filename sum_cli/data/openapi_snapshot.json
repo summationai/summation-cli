@@ -304,6 +304,77 @@
         "title": "ChatMessageRequest",
         "type": "object"
       },
+      "CommittedSourceCheckpoint": {
+        "additionalProperties": false,
+        "description": "The committed cursor as it appears on the wire, in public camelCase.\n\nSeparate from `SourceCheckpoint`, which models the request body: responses\nare serialized through `to_public_json`, so the documented property names\nhave to be the camelCase ones a client actually receives.",
+        "properties": {
+          "backfillUpperBound": {
+            "description": "Fixed source timestamp ceiling captured before backfill.",
+            "title": "Backfillupperbound",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable source id tie-breaker; empty before the first committed page.",
+            "title": "Id",
+            "type": "string"
+          },
+          "lastmodifieddate": {
+            "description": "Last fully committed source lastmodifieddate; empty before the first committed page.",
+            "title": "Lastmodifieddate",
+            "type": "string"
+          },
+          "phase": {
+            "description": "Current extraction phase: BACKFILL or INCREMENTAL. Empty when nothing is committed yet.",
+            "enum": [
+              "BACKFILL",
+              "INCREMENTAL",
+              ""
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "backfillUpperBound",
+          "lastmodifieddate",
+          "id"
+        ],
+        "title": "CommittedSourceCheckpoint",
+        "type": "object"
+      },
+      "ConnectionDatasetUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New description; omit to keep the current one, or pass an empty string to clear it.",
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New dataset name; omit to keep the current one.",
+            "title": "Name"
+          }
+        },
+        "title": "ConnectionDatasetUpdateRequest",
+        "type": "object"
+      },
       "ConnectionDatasetsAttachRequest": {
         "properties": {
           "datasets": {
@@ -378,7 +449,15 @@
         "properties": {
           "config": {
             "additionalProperties": true,
-            "description": "Non-secret, type-specific settings (host, port, database, warehouse, user, ...).",
+            "description": "Non-secret, type-specific settings. The accepted keys differ per type \u2014 GET /v1/connections/data/types/{type} lists them with which are required and a ready-to-send example. Postgres, for instance, takes pg_host, pg_port, pg_db, pg_user and pg_sslmode.",
+            "examples": [
+              {
+                "pg_db": "analytics",
+                "pg_host": "db.example.com",
+                "pg_port": "5432",
+                "pg_user": "summation"
+              }
+            ],
             "title": "Config",
             "type": "object"
           },
@@ -408,13 +487,18 @@
           },
           "secrets": {
             "additionalProperties": true,
-            "description": "Credentials (e.g. password). Stored server-side as secret refs; never returned by any response.",
+            "description": "Credentials, keyed the same way as config \u2014 see GET /v1/connections/data/types/{type} for the secret keys of a given type (Postgres: pg_pass). Stored server-side as secret refs; never returned by any response.",
+            "examples": [
+              {
+                "pg_pass": "<password>"
+              }
+            ],
             "title": "Secrets",
             "type": "object"
           },
           "snapshot_config": {
             "additionalProperties": true,
-            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters; initial_query_parameters; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}; optional source-to-destination field_mappings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
+            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor, required for every INCREMENTAL_* sync strategy and optional for FULL_REFRESH, in formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters (KEYSET requires a cursor); initial_query_parameters, which require a cursor; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}. A cursor-less resource rejects both placeholders, and may set constant query_parameters only under TOKEN or OFFSET pagination, where they are sent on every page; NEXT_LINK and LINK_HEADER follow a provider-built continuation URL and so reject query_parameters entirely. Optional source-to-destination field_mappings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
             "examples": [
               {
                 "enabled": true,
@@ -886,6 +970,106 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IngestionBatchCommitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_sha256": {
+            "description": "Hex-encoded SHA-256 digest of the completed CSV object.",
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Expected Sha256",
+            "type": "string"
+          },
+          "expected_size_bytes": {
+            "description": "Exact byte size of the completed CSV object.",
+            "exclusiveMinimum": 0.0,
+            "maximum": 9007199254740991.0,
+            "title": "Expected Size Bytes",
+            "type": "integer"
+          },
+          "parts": {
+            "description": "All uploaded parts in contiguous ascending order starting at one.",
+            "items": {
+              "$ref": "#/components/schemas/IngestionBatchPart"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Parts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_size_bytes",
+          "expected_sha256",
+          "parts"
+        ],
+        "title": "IngestionBatchCommitRequest",
+        "type": "object"
+      },
+      "IngestionBatchCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Caller-generated key that makes batch creation idempotent for this table.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "mode": {
+            "description": "How uploaded rows are applied: append or upsert by business key.",
+            "enum": [
+              "APPEND",
+              "UPSERT"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "source_watermark": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional source cursor or timestamp represented by this batch.",
+            "title": "Source Watermark"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "mode"
+        ],
+        "title": "IngestionBatchCreateRequest",
+        "type": "object"
+      },
+      "IngestionBatchPart": {
+        "additionalProperties": false,
+        "properties": {
+          "etag": {
+            "description": "ETag returned by object storage after uploading this part.",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Etag",
+            "type": "string"
+          },
+          "part_number": {
+            "description": "One-based multipart upload sequence number.",
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Part Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "part_number",
+          "etag"
+        ],
+        "title": "IngestionBatchPart",
         "type": "object"
       },
       "PlaybookScheduleConfigRequest": {
@@ -1483,6 +1667,331 @@
         "title": "ScheduleRunCreateRequest",
         "type": "object"
       },
+      "SourceCheckpoint": {
+        "additionalProperties": false,
+        "description": "Authoritative NetSuite SuiteQL cursor whose fixed upper bound never changes.",
+        "properties": {
+          "backfillUpperBound": {
+            "description": "Fixed source timestamp ceiling captured before backfill.",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Backfillupperbound",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable source id tie-breaker, empty only at initial backfill.",
+            "maxLength": 255,
+            "title": "Id",
+            "type": "string"
+          },
+          "lastmodifieddate": {
+            "description": "Last fully committed source lastmodifieddate, empty only at initial backfill.",
+            "maxLength": 128,
+            "title": "Lastmodifieddate",
+            "type": "string"
+          },
+          "phase": {
+            "description": "Current extraction phase: BACKFILL or INCREMENTAL.",
+            "enum": [
+              "BACKFILL",
+              "INCREMENTAL"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "backfillUpperBound",
+          "lastmodifieddate",
+          "id"
+        ],
+        "title": "SourceCheckpoint",
+        "type": "object"
+      },
+      "SourceCheckpointData": {
+        "additionalProperties": false,
+        "properties": {
+          "committedCheckpoint": {
+            "$ref": "#/components/schemas/CommittedSourceCheckpoint",
+            "description": "Echo this back as expected_checkpoint when submitting the page queried above it."
+          }
+        },
+        "required": [
+          "committedCheckpoint"
+        ],
+        "title": "SourceCheckpointData",
+        "type": "object"
+      },
+      "SourceCheckpointResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourceCheckpointData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SourceCheckpointResponse",
+        "type": "object"
+      },
+      "SourcePagePublic": {
+        "properties": {
+          "committed_checkpoint": {
+            "$ref": "#/components/schemas/SourceCheckpoint"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "rows_inserted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Inserted"
+          },
+          "rows_skipped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Skipped"
+          },
+          "rows_updated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Updated"
+          },
+          "status": {
+            "description": "CREATING, COMMITTING, and RUNNING are non-terminal; SUCCEEDED and FAILED are terminal.",
+            "enum": [
+              "CREATING",
+              "COMMITTING",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "sync_id": {
+            "title": "Sync Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "sync_id",
+          "status",
+          "committed_checkpoint",
+          "row_count"
+        ],
+        "title": "SourcePagePublic",
+        "type": "object"
+      },
+      "SourcePageStatusResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourcePagePublic"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SourcePageStatusResponse",
+        "type": "object"
+      },
+      "SourcePageSubmitRequest": {
+        "additionalProperties": false,
+        "description": "One bounded NetSuite REST page and its authoritative check-and-set cursor.",
+        "properties": {
+          "expected_checkpoint": {
+            "$ref": "#/components/schemas/SourceCheckpoint",
+            "description": "Checkpoint that must currently be committed for this sync."
+          },
+          "idempotency_key": {
+            "description": "Stable caller-generated key for this exact source page; reuse it after timeouts.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "next_checkpoint": {
+            "$ref": "#/components/schemas/SourceCheckpoint",
+            "description": "Checkpoint committed only after every record in this page applies successfully."
+          },
+          "record_cursors": {
+            "description": "One ordered NetSuite (lastmodifieddate, id) tuple for each record. The service verifies that the terminal tuple exactly equals next_checkpoint before it can advance the durable cursor. May be omitted only when records is empty or omitted.",
+            "items": {
+              "$ref": "#/components/schemas/SourceRecordCursor"
+            },
+            "maxItems": 1000,
+            "title": "Record Cursors",
+            "type": "array"
+          },
+          "records": {
+            "description": "Up to 1,000 JSON objects containing strings, integers, booleans, or null. Decimal values must be encoded as strings. Nullable columns may be omitted. An empty or omitted list is reserved for the checkpoint-only transition from an empty bounded backfill to incremental mode.",
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "maxItems": 1000,
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "expected_checkpoint",
+          "next_checkpoint"
+        ],
+        "title": "SourcePageSubmitRequest",
+        "type": "object"
+      },
+      "SourcePageSubmitResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourcePageSubmitResponseData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SourcePageSubmitResponse",
+        "type": "object"
+      },
+      "SourcePageSubmitResponseData": {
+        "properties": {
+          "page": {
+            "$ref": "#/components/schemas/SourcePagePublic"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "page",
+          "replayed"
+        ],
+        "title": "SourcePageSubmitResponseData",
+        "type": "object"
+      },
+      "SourceRecordCursor": {
+        "additionalProperties": false,
+        "description": "The SuiteQL ordering tuple for one destination record in a source page.",
+        "properties": {
+          "id": {
+            "description": "NetSuite record identifier used as the deterministic tie-breaker in the SuiteQL ordering tuple.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "lastmodifieddate": {
+            "description": "NetSuite last-modified timestamp used for the record's SuiteQL ordering tuple.",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Lastmodifieddate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lastmodifieddate",
+          "id"
+        ],
+        "title": "SourceRecordCursor",
+        "type": "object"
+      },
       "SumAppRegistration": {
         "description": "Deploy-pipeline registration of a deployed SumApp (POST /v1/sum-apps).",
         "properties": {
@@ -1709,7 +2218,7 @@
           },
           "import_type": {
             "default": "NEW",
-            "description": "How the asset is applied: 'NEW' imports it into a new table, 'FULL_REFRESH' re-imports the full asset into a previously imported table (replacing its rows), 'INCREMENTAL_REFRESH' appends the asset's rows to a previously imported table. Case-insensitive.",
+            "description": "How the asset is applied: 'NEW' imports it into a new table and refuses a name that already exists; 'FULL_REFRESH' and 'INCREMENTAL_REFRESH' re-import the full asset into a previously imported table, replacing its rows \u2014 for file imports the two are equivalent today (neither appends), and both require confirm=true. Case-insensitive.",
             "enum": [
               "NEW",
               "FULL_REFRESH",
@@ -1905,6 +2414,1314 @@
         },
         "title": "ViewCatalogUpdateRequest",
         "type": "object"
+      },
+      "Workflow": {
+        "properties": {
+          "activeVersionId": {
+            "description": "The activated version this workflow currently runs, or empty if it has never been activated.",
+            "title": "Activeversionid",
+            "type": "string"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "executionFormat": {
+            "description": "typed_graph for workflows built from a graph document, legacy_playbook for the older step-shaped workflows. Fixed when the workflow is created.",
+            "title": "Executionformat",
+            "type": "string"
+          },
+          "graph": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The editable graph document, for graph workflows.",
+            "title": "Graph"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "outputFolder": {
+            "title": "Outputfolder",
+            "type": "string"
+          },
+          "ownerUserId": {
+            "description": "The user the workflow runs as. Assigned at creation and never reassigned.",
+            "title": "Owneruserid",
+            "type": "string"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Advances on every change. Pass it back as expected_revision.",
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "description": "One of draft, active, paused, archived, unknown.",
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "triggers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowTrigger"
+            },
+            "title": "Triggers",
+            "type": "array"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "title",
+          "description",
+          "ownerUserId",
+          "status",
+          "executionFormat",
+          "outputFolder",
+          "revision",
+          "activeVersionId",
+          "triggers",
+          "steps"
+        ],
+        "title": "Workflow",
+        "type": "object"
+      },
+      "WorkflowActivateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "description": "The revision you last read. Activation freezes the workflow as it stands, so a revision you have not seen is refused rather than frozen under your name.",
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "WorkflowActivateRequest",
+        "type": "object"
+      },
+      "WorkflowActivation": {
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/WorkflowVersion",
+            "description": "The version this activation froze."
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/Workflow"
+          }
+        },
+        "required": [
+          "workflow",
+          "version"
+        ],
+        "title": "WorkflowActivation",
+        "type": "object"
+      },
+      "WorkflowActivationResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowActivation"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowActivationResponse",
+        "type": "object"
+      },
+      "WorkflowCreateRequest": {
+        "additionalProperties": false,
+        "description": "A new workflow. Created as a draft; use the activate operation to make it run.",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "Optional longer description.",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "graph": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The workflow's graph document: the nodes it runs and how they connect, as {\"nodes\": [...], \"edges\": [...]}. This is the FULL desired document on every create and update, not a patch \u2014 what you send replaces the stored graph. It must contain a trigger node, summation.trigger.schedule/v1 or summation.trigger.manual/v1, wired to the first work node by an edge {\"from_node\": \"<trigger key>\", \"from_port\": \"inputs\", \"to_node\": \"<first work node key>\", \"to_port\": \"inputs\"}. Each node is {\"key\", \"type\", \"config\"}; the node type ids you may use and the config each one takes come from GET /v1/workflows/node-types. A config carries ONLY the keys its node type declares there \u2014 any other key is refused, so a field the node type does not name cannot be smuggled through it. Use the summation.trigger.schedule/v1 node exactly when this request also carries schedule triggers; see the triggers field. Omit to create an empty draft. Serializes to at most 200000 characters. The web editor adopts API-authored graphs and normalizes them to its canonical form on its next save.",
+            "title": "Graph"
+          },
+          "output_folder": {
+            "default": "",
+            "description": "Project folder the workflow writes its outputs to, for example /Reports.",
+            "maxLength": 512,
+            "title": "Output Folder",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project the workflow belongs to. You must have editor access to it.",
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "draft",
+            "description": "Workflow state. A workflow becomes active only through the activate operation, which freezes the version that runs.",
+            "enum": [
+              "draft",
+              "paused",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "Workflow name, shown wherever it is listed.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "triggers": {
+            "description": "Schedules that start this workflow. Omit for a workflow that only runs on demand. These rows and the graph's trigger nodes must agree: a schedule here requires a summation.trigger.schedule/v1 node in the graph \u2014 it is the node the schedule's parameter values are bound to \u2014 and that node requires a schedule here, or nothing would fire it. A request where the two disagree is refused.",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowTriggerRequest"
+            },
+            "maxItems": 20,
+            "title": "Triggers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "title"
+        ],
+        "title": "WorkflowCreateRequest",
+        "type": "object"
+      },
+      "WorkflowListData": {
+        "properties": {
+          "nextPageToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as page_token to fetch the next page. Absent on the last page.",
+            "title": "Nextpagetoken"
+          },
+          "workflows": {
+            "items": {
+              "$ref": "#/components/schemas/Workflow"
+            },
+            "title": "Workflows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "workflows"
+        ],
+        "title": "WorkflowListData",
+        "type": "object"
+      },
+      "WorkflowListResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowListData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowListResponse",
+        "type": "object"
+      },
+      "WorkflowNodeType": {
+        "properties": {
+          "category": {
+            "description": "trigger, action, gate, or delivery.",
+            "title": "Category",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "description": "Versioned node type id, used as a node's type in the graph document.",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tier": {
+            "description": "standard, or advanced for node types that need the advanced tier.",
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "category",
+          "tier",
+          "description"
+        ],
+        "title": "WorkflowNodeType",
+        "type": "object"
+      },
+      "WorkflowNodeTypeListData": {
+        "properties": {
+          "nodeTypes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNodeType"
+            },
+            "title": "Nodetypes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodeTypes"
+        ],
+        "title": "WorkflowNodeTypeListData",
+        "type": "object"
+      },
+      "WorkflowNodeTypeListResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowNodeTypeListData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowNodeTypeListResponse",
+        "type": "object"
+      },
+      "WorkflowResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Workflow"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse",
+        "type": "object"
+      },
+      "WorkflowRun": {
+        "properties": {
+          "businessOutcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run's verdict where it has one beyond success: no_action means the workflow ran and deliberately delivered nothing, for example because a data freshness gate stopped it.",
+            "title": "Businessoutcome"
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "dispatchedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatchedat"
+          },
+          "errorReason": {
+            "description": "Why the run did not complete, in product terms. Empty for a run that succeeded.",
+            "title": "Errorreason",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "nodes": {
+            "description": "Per-node detail, for graph workflows.",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "The parameter values this run resolved to.",
+            "title": "Params",
+            "type": "object"
+          },
+          "status": {
+            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, unknown.",
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "description": "Step detail, for legacy workflows.",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "triggerId": {
+            "description": "The schedule that started the run; empty for an on-demand run.",
+            "title": "Triggerid",
+            "type": "string"
+          },
+          "triggerType": {
+            "title": "Triggertype",
+            "type": "string"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "description": "The activated version this run executed, when the workflow had one.",
+            "title": "Workflowversionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workflowId",
+          "workflowVersionId",
+          "triggerId",
+          "triggerType",
+          "status",
+          "params",
+          "errorReason",
+          "steps",
+          "nodes"
+        ],
+        "title": "WorkflowRun",
+        "type": "object"
+      },
+      "WorkflowRunCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "description": "Idempotency key for this run, as a UUID. Retrying with the same value returns the run that was already started instead of starting a second one.",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "workflow_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The activated version you intend to run, required for graph workflows. The run is refused if the workflow has since been activated again, so a retry cannot silently run a newer definition.",
+            "title": "Workflow Version Id"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "WorkflowRunCreateRequest",
+        "type": "object"
+      },
+      "WorkflowRunListData": {
+        "properties": {
+          "nextPageToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextpagetoken"
+          },
+          "runs": {
+            "description": "Newest first.",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "WorkflowRunListData",
+        "type": "object"
+      },
+      "WorkflowRunListResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowRunListData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowRunListResponse",
+        "type": "object"
+      },
+      "WorkflowRunNode": {
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "decidedByNodeKey": {
+            "description": "The gate that skipped this node, when one did.",
+            "title": "Decidedbynodekey",
+            "type": "string"
+          },
+          "errorReason": {
+            "title": "Errorreason",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "nodeKey": {
+            "description": "The node's key in the frozen graph this run executed.",
+            "title": "Nodekey",
+            "type": "string"
+          },
+          "nodeType": {
+            "title": "Nodetype",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "How the node finished, beyond its status. Empty while it is running.",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": true,
+            "description": "What the node produced.",
+            "title": "Result",
+            "type": "object"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "skipReason": {
+            "title": "Skipreason",
+            "type": "string"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "status": {
+            "description": "pending, running, succeeded, failed, skipped, canceled, or unknown.",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nodeKey",
+          "nodeType",
+          "sequence",
+          "status",
+          "outcome",
+          "attempt",
+          "errorReason",
+          "skipReason",
+          "decidedByNodeKey",
+          "result"
+        ],
+        "title": "WorkflowRunNode",
+        "type": "object"
+      },
+      "WorkflowRunResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowRun"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowRunResponse",
+        "type": "object"
+      },
+      "WorkflowRunStep": {
+        "properties": {
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "description": "What the step delivered or failed on, as a curated set of fields: outcome, errorReason, skipReason, and the delivery counts (recipientCount, deliveredCount, suppressedCount, failedRecipientCount, targetCount, failedTargetCount, attachmentCount, linkCount). A field is absent when the step reported nothing for it, and an empty object means the step reported nothing at all.",
+            "title": "Detail",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "pending, running, succeeded, failed, skipped, canceled, or unknown.",
+            "title": "Status",
+            "type": "string"
+          },
+          "stepId": {
+            "title": "Stepid",
+            "type": "string"
+          },
+          "type": {
+            "description": "playbook, email_delivery, slack_delivery, or unknown.",
+            "title": "Type",
+            "type": "string"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "required": [
+          "id",
+          "stepId",
+          "type",
+          "status",
+          "detail"
+        ],
+        "title": "WorkflowRunStep",
+        "type": "object"
+      },
+      "WorkflowSchedule": {
+        "description": "A trigger's cadence, field for field invertible into a WorkflowTriggerSchedule.\n\nThis is the read half of the same object the write half accepts: every field present here\nis one ``WorkflowTriggerSchedule`` takes, holding a value it accepts, so a caller can GET a\nworkflow, hand a trigger's ``schedule`` straight back on a PUT, and get the schedule it\nalready had. ``zoneId`` lives HERE rather than on the trigger for exactly that reason \u2014 the\nwrite model carries the timezone inside the schedule, and a projection that put it one\nlevel up would drop the timezone on every round trip that copied the schedule across.",
+        "properties": {
+          "anchorDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchordate"
+          },
+          "cronExpression": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cronexpression"
+          },
+          "dayOfMonth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dayofmonth"
+          },
+          "daysOfWeek": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Uppercase weekday names, for example MONDAY.",
+            "title": "Daysofweek"
+          },
+          "everyMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Everyminutes"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many periods apart the cadence repeats, for cadences that can skip periods.",
+            "title": "Interval"
+          },
+          "runDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rundate"
+          },
+          "timeOfDay": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Local time of day, in this schedule's timezone.",
+            "title": "Timeofday"
+          },
+          "type": {
+            "description": "Cadence kind: cron, interval, one_time, daily, weekly, biweekly, monthly, or month_end.",
+            "title": "Type",
+            "type": "string"
+          },
+          "zoneId": {
+            "description": "IANA timezone the schedule's local times are read in.",
+            "title": "Zoneid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "zoneId"
+        ],
+        "title": "WorkflowSchedule",
+        "type": "object"
+      },
+      "WorkflowStep": {
+        "description": "One step of a legacy step-shaped workflow. Graph workflows carry a graph instead.",
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "targetFileId": {
+            "description": "Playbook or attachment file this step acts on.",
+            "title": "Targetfileid",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepTarget"
+            },
+            "title": "Targets",
+            "type": "array"
+          },
+          "type": {
+            "description": "playbook, email_delivery, slack_delivery, or unknown.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "position",
+          "type",
+          "targetFileId",
+          "config",
+          "targets"
+        ],
+        "title": "WorkflowStep",
+        "type": "object"
+      },
+      "WorkflowStepTarget": {
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "kind": {
+            "description": "email_to, email_cc, email_bcc, slack_channel, slack_user, or unknown.",
+            "enum": [
+              "email_to",
+              "email_cc",
+              "email_bcc",
+              "slack_channel",
+              "slack_user",
+              "unknown"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "description": "Email address, or Slack channel or user id.",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "displayName"
+        ],
+        "title": "WorkflowStepTarget",
+        "type": "object"
+      },
+      "WorkflowTrigger": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "Parameter values this trigger passes to the workflow.",
+            "title": "Params",
+            "type": "object"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowSchedule"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cadence, for schedule triggers."
+          },
+          "type": {
+            "description": "schedule, webhook, api, data_event, or unknown.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "label",
+          "enabled",
+          "params"
+        ],
+        "title": "WorkflowTrigger",
+        "type": "object"
+      },
+      "WorkflowTriggerRequest": {
+        "additionalProperties": false,
+        "description": "One schedule trigger on a workflow.\n\nTriggers are a full replace-set on every write: a workflow's triggers are exactly the\nones the request carries, and any it omits are deleted along with their backing schedule.\nEcho the ``id`` of a trigger you are keeping so its stored settings survive the write.\n\nA trigger read back from a GET is field for field a trigger this model takes, in either\nspelling, so a caller can hand one straight back on a write.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "description": "Set false to keep the schedule but stop it firing.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "description": "Existing trigger id to update. Omit to create a new trigger.",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "description": "Human-readable name for this schedule.",
+            "maxLength": 255,
+            "title": "Label",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "Parameter values this schedule passes to the workflow, merged over the workflow's own values.",
+            "title": "Params",
+            "type": "object"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/WorkflowTriggerSchedule",
+            "description": "Cadence and timezone for this schedule."
+          },
+          "type": {
+            "const": "schedule",
+            "default": "schedule",
+            "description": "Trigger kind. Only schedule triggers can be created through this API.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schedule"
+        ],
+        "title": "WorkflowTriggerRequest",
+        "type": "object"
+      },
+      "WorkflowTriggerSchedule": {
+        "additionalProperties": false,
+        "description": "A trigger's cadence and the timezone its local times are read in.\n\n``type`` is one of cron, interval, one_time, daily, weekly, biweekly, monthly, month_end,\nyearly, and it decides which other fields are required: cron needs ``cron_expression`` (5-field\nstandard or 6/7-field Quartz), interval needs ``every_minutes``, one_time needs ``run_date``,\nweekly and biweekly need ``days_of_week`` (biweekly also ``anchor_date``), monthly needs\n``day_of_month``, yearly needs ``month`` and ``day_of_month``. Every type but cron and interval\nalso reads ``time_of_day``, local HH:mm or HH:mm:ss, defaulting to 09:00. ``days_of_week``\nholds UPPERCASE day names (MONDAY \u2026 SUNDAY). ``interval`` means \"every N periods\" for weekly,\nmonthly and month_end, and must be 1 for daily and biweekly \u2014 biweekly is already every second\nweek, counted from ``anchor_date``.\n\n``zone_id`` is REQUIRED on every type here, unlike the shared expression model it derives from, whose\ndefault is UTC. A schedule's timezone is what decides when it fires and which calendar day\nits relative date parameters resolve against, so silently defaulting it would re-time a\ncaller's schedule rather than refuse an incomplete one. The web-app BFF requires zoneId on\nthe same write for the same reason.\n\nField names are documented in snake_case, and every one is ALSO accepted in its camelCase\nspelling (``zoneId``, ``timeOfDay``, ``daysOfWeek``, \u2026), which is how a cadence read back from\na GET is spelled \u2014 the subclass's validation-alias generator covers the fields it inherits\nfrom the shared expression model, not only the ones it redeclares.",
+        "properties": {
+          "anchor_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for type biweekly, ignored otherwise. The local date, as YYYY-MM-DD, that the every-second-week count starts from.",
+            "title": "Anchor Date"
+          },
+          "cron_expression": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for type cron, ignored otherwise. A 5-field standard cron expression (minute hour day-of-month month day-of-week) or a 6/7-field Quartz one (seconds first, optional trailing year); it is stored in the Quartz form.",
+            "title": "Cron Expression"
+          },
+          "day_of_month": {
+            "anyOf": [
+              {
+                "maximum": 31.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for types monthly and yearly, ignored otherwise. Day of the month, 1 to 31. Use type month_end rather than 31 for the last day of every month.",
+            "title": "Day Of Month"
+          },
+          "days_of_week": {
+            "description": "Required for types weekly and biweekly, ignored otherwise. UPPERCASE day names \u2014 MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY \u2014 one entry per day the schedule runs.",
+            "items": {
+              "enum": [
+                "MONDAY",
+                "TUESDAY",
+                "WEDNESDAY",
+                "THURSDAY",
+                "FRIDAY",
+                "SATURDAY",
+                "SUNDAY"
+              ],
+              "type": "string"
+            },
+            "title": "Days Of Week",
+            "type": "array"
+          },
+          "every_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for type interval, ignored otherwise. Minutes between runs, 1 to 1440. Under 60 it must divide 60 evenly; 60 or more must be a whole number of hours, and over 60 must divide 1440 evenly.",
+            "title": "Every Minutes"
+          },
+          "interval": {
+            "default": 1,
+            "description": "How many periods apart the runs are: every N weeks for weekly, every N months for monthly and month_end. Defaults to 1 (every period) and must be 1 for daily and biweekly \u2014 biweekly is already every second week, counted from anchor_date.",
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "Interval",
+            "type": "integer"
+          },
+          "month": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for type yearly, ignored otherwise. Month of the year, 1 to 12.",
+            "title": "Month"
+          },
+          "run_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for type one_time, ignored otherwise. The single local date the schedule runs on, as YYYY-MM-DD, read in zone_id at time_of_day.",
+            "title": "Run Date"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "09:00",
+            "description": "Local HH:mm or HH:mm:ss time",
+            "title": "Time Of Day"
+          },
+          "type": {
+            "enum": [
+              "cron",
+              "interval",
+              "one_time",
+              "daily",
+              "weekly",
+              "biweekly",
+              "monthly",
+              "month_end",
+              "yearly"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "zone_id": {
+            "description": "IANA timezone the schedule's local times are read in, for example America/Los_Angeles.",
+            "title": "Zone Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "zone_id"
+        ],
+        "title": "WorkflowTriggerSchedule",
+        "type": "object"
+      },
+      "WorkflowUpdateRequest": {
+        "additionalProperties": false,
+        "description": "A full replacement of a workflow's editable state.\n\nEditing a workflow changes what the NEXT activation would run, never what an already\nactive schedule is running.\n\nThis is the read-modify-write half of the surface, so it takes a workflow exactly as a GET\nrenders it, plus ``expected_revision``: the fields a workflow reports but does not let you\nset \u2014 its id, owner, execution format, revision, active version, run steps and timestamps \u2014\nare dropped rather than refused. Anything else it does not recognise is still a 422, so a\nmisspelled field cannot silently skip part of the change.\n\n``status`` is the one field that is writable AND readable with a value the write half cannot\nmint, so it is accepted as an echo rather than dropped: see its description and\n``update_workflow``.",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "Optional longer description.",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "expected_revision": {
+            "description": "The revision you last read. The update is applied only if the workflow is still at that revision; otherwise nothing changes and the request conflicts. This is what stops a stale client deleting another client's triggers.",
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "graph": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replacement graph document, in the same shape and with the same trigger and edge rules as on create: send the full desired document, since what you send replaces the stored graph rather than merging into it. Omit to leave the stored graph untouched. Serializes to at most 200000 characters.",
+            "title": "Graph"
+          },
+          "output_folder": {
+            "default": "",
+            "description": "Project folder the workflow writes its outputs to, for example /Reports.",
+            "maxLength": 512,
+            "title": "Output Folder",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project the workflow belongs to. You must have editor access to it.",
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "draft",
+                  "active",
+                  "paused",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New workflow state. Omit to leave it unchanged. active is accepted only as an echo: an already active workflow can be handed back exactly as it reads, and the update leaves it active. It cannot be used to ACTIVATE a workflow \u2014 that is the activate operation, which freezes the version that runs \u2014 so asking for active on a workflow that is not already active is refused.",
+            "title": "Status"
+          },
+          "title": {
+            "description": "Workflow name, shown wherever it is listed.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "triggers": {
+            "description": "Schedules that start this workflow. Omit for a workflow that only runs on demand. These rows and the graph's trigger nodes must agree: a schedule here requires a summation.trigger.schedule/v1 node in the graph \u2014 it is the node the schedule's parameter values are bound to \u2014 and that node requires a schedule here, or nothing would fire it. A request where the two disagree is refused.",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowTriggerRequest"
+            },
+            "maxItems": 20,
+            "title": "Triggers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "title",
+          "expected_revision"
+        ],
+        "title": "WorkflowUpdateRequest",
+        "type": "object"
+      },
+      "WorkflowVersion": {
+        "description": "An immutable snapshot of what a workflow runs, minted by activation.\n\nMetadata ONLY, deliberately: the frozen document itself is not projected. What activation\nwrites into ``workflow_versions.definition_json`` is an executor artifact, not a caller\ndocument \u2014 TypedWorkflowDefinitionFreezer writes the compiled execution plan alongside the\ngraph, and every skill node's resolved manifest with it (``packagePath``, ``packageDigest``,\nand per-file ``fileId``/``fileVersionId``/``contentHash``). Those are internal wire format\nand project-internal paths, which no public payload may carry (see AGENTS.md). The document\na caller AUTHORED is the workflow's own ``graph``, which GET /v1/workflows/{id} returns; a\nversion answers a different question \u2014 WHICH revision is live and when it shipped \u2014 and\n``source_revision`` against the workflow's ``revision`` is the whole of that answer. The\nexecutor template a version is pinned to is internal for the same reason and is likewise\nnever projected.",
+        "properties": {
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "createdBy": {
+            "title": "Createdby",
+            "type": "string"
+          },
+          "executionFormat": {
+            "title": "Executionformat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sourceRevision": {
+            "description": "The workflow revision this version was frozen from.",
+            "title": "Sourcerevision",
+            "type": "integer"
+          },
+          "versionNumber": {
+            "title": "Versionnumber",
+            "type": "integer"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workflowId",
+          "versionNumber",
+          "executionFormat",
+          "sourceRevision",
+          "createdBy"
+        ],
+        "title": "WorkflowVersion",
+        "type": "object"
+      },
+      "WorkflowVersionListData": {
+        "properties": {
+          "nextPageToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextpagetoken"
+          },
+          "versions": {
+            "description": "Newest first.",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowVersion"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "versions"
+        ],
+        "title": "WorkflowVersionListData",
+        "type": "object"
+      },
+      "WorkflowVersionListResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowVersionListData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowVersionListResponse",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1930,7 +3747,7 @@
   "paths": {
     "/v1/assets/upload-urls": {
       "post": {
-        "description": "Create a short-lived upload URL for a source file that will be imported into a table. Upload the file to the returned URL, then preview or import the resulting asset.",
+        "description": "Create a short-lived upload URL for a source file that will be imported into a table. Upload the file to the returned URL with HTTP PUT and the header Content-Type: text/csv \u2014 the URL's signature requires it, so a request without that exact header is rejected with a signature mismatch. Then preview or import the resulting asset.",
         "operationId": "create_asset_upload_url",
         "requestBody": {
           "content": {
@@ -3294,7 +5111,7 @@
         ]
       },
       "post": {
-        "description": "Create a data connection to an external source (e.g. Postgres,\nSnowflake).\n\n``config`` holds non-secret settings; credentials go in ``secrets`` and\nare stored server-side, never returned. A new connection reports status\nACTIVE and ``lastTestStatus`` empty: status ACTIVE means the record\nexists, NOT that credentials work. Call the connection test endpoint to\nverify \u2014 it sets ``lastTestStatus`` to ``PASS``/``FAIL`` and stamps\n``lastTestedAt``. Check ``lastTestStatus == PASS`` before relying on a\nconnection, and attach datasets before expecting any data to be analyzable.\n\nFor an HTTP/REST connection only, configure durable incremental requests in\nconnector-level ``snapshot_config.http_replication``. Do not place advanced\nreplication settings in ``config`` or in a dataset's snapshot settings. The\nrequest schema documents the supported limits, resources, cursors,\npagination modes, and a complete example.",
+        "description": "Create a data connection to an external source (e.g. Postgres,\nSnowflake).\n\nCall ``GET /v1/connections/data/types/{type}`` first: it lists the exact\n``config`` and ``secrets`` keys this type accepts, which are required, and a\nready-to-send example. Validation messages name a field by its UI label\n(\"Database is required\"); that listing is what maps the label back to the key\nto send (``pg_db``).\n\n``config`` holds non-secret settings; credentials go in ``secrets`` and\nare stored server-side, never returned. A new connection reports status\nACTIVE and ``lastTestStatus`` empty: status ACTIVE means the record\nexists, NOT that credentials work. Call the connection test endpoint to\nverify \u2014 it sets ``lastTestStatus`` to ``PASS``/``FAIL`` and stamps\n``lastTestedAt``. Check ``lastTestStatus == PASS`` before relying on a\nconnection, and attach datasets before expecting any data to be analyzable.\n\nFor an HTTP/REST connection only, configure durable incremental requests in\nconnector-level ``snapshot_config.http_replication``. Do not place advanced\nreplication settings in ``config`` or in a dataset's snapshot settings. The\nrequest schema documents the supported limits, resources, cursors,\npagination modes, and a complete example.",
         "operationId": "create_data_connection",
         "requestBody": {
           "content": {
@@ -3394,6 +5211,201 @@
           }
         ],
         "summary": "Create connection",
+        "tags": [
+          "Data Connectors"
+        ]
+      }
+    },
+    "/v1/connections/data/types": {
+      "get": {
+        "description": "List every connector type and the exact ``config`` and ``secrets`` keys it accepts.\n\nRead this before creating a connection. Each field carries its API ``key``\n(what you send), the ``label`` the UI and validation errors use for it (so a\nrejection naming \"Database\" maps back to ``pg_db``), whether it is\n``required``, and an ``example`` where one helps. ``applies_when`` marks\nfields that only apply under a particular auth or mode choice.\n\nCredentials belong in ``secrets`` and are never returned by any response;\neverything listed under ``config`` is stored in the clear and readable back.\n\n``undocumented_types`` names connector types the product supports whose keys are\nnot published yet. They are creatable, but only through the app \u2014 this listing\nomits them rather than risk naming a key wrongly, which would send a caller down\na path that silently fails.",
+        "operationId": "list_connector_types",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List connector types",
+        "tags": [
+          "Data Connectors"
+        ]
+      }
+    },
+    "/v1/connections/data/types/{connector_type}": {
+      "get": {
+        "description": "Show one connector type's ``config`` and ``secrets`` keys, plus a ready-to-send create example.",
+        "operationId": "show_connector_type",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connector_type",
+            "required": true,
+            "schema": {
+              "title": "Connector Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "Show connector type",
         "tags": [
           "Data Connectors"
         ]
@@ -3965,6 +5977,260 @@
         ]
       }
     },
+    "/v1/connections/data/{connection_id}/datasets/{dataset_id}": {
+      "delete": {
+        "description": "Detach a dataset from this connection, removing it from analysis and queries.\n\nDestructive \u2014 requires ``confirm=true`` and write scope. The dataset stops\nbeing queryable; the underlying source table is untouched and can be\nre-attached later. The connection itself and its other datasets are\nunaffected.",
+        "operationId": "detach_data_connection_dataset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Set confirm=true to detach the dataset. Required.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true to detach the dataset. Required.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Detach connection dataset",
+        "tags": [
+          "Data Connectors"
+        ]
+      },
+      "patch": {
+        "description": "Rename a dataset or change its description.\n\nOnly ``name`` and ``description`` are editable. The source binding\n(``from_source``, connector params, acceleration) is fixed at attach time \u2014\nto point a dataset somewhere else, detach it and attach the new source.\nRenaming changes the name analysis queries use, so update any saved SQL that\nreferences the old name.",
+        "operationId": "update_data_connection_dataset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionDatasetUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Update connection dataset",
+        "tags": [
+          "Data Connectors"
+        ]
+      }
+    },
     "/v1/connections/data/{connection_id}/datasets/{dataset_id}/snapshots": {
       "post": {
         "description": "Take a snapshot of a dataset now \u2014 copy its current source data into\nSummation's lakehouse so downstream tables (e.g. calculation tables over raw\nAPI responses) can build on a stable copy.\n\nSnapshotting must be enabled for the dataset (``snapshot_enabled`` at attach,\nor the connection's snapshot policy); otherwise this returns a conflict\nexplaining what to enable. Returns ``202`` once the snapshot run is queued \u2014\npoll the connection's snapshot runs until its ``status`` is terminal, then\nfind the copied table via ``snapshotTableName``. One snapshot per dataset\nruns at a time; a second request while one is active returns a conflict.",
@@ -4427,6 +6693,377 @@
         "summary": "Test connection",
         "tags": [
           "Data Connectors"
+        ]
+      }
+    },
+    "/v1/data-syncs/{sync_id}/checkpoint": {
+      "get": {
+        "description": "Return the cursor a scheduled run should query from.\n\nRead this at the start of every run, query the bounded page above it, and\necho it back as `expected_checkpoint` when submitting that page.",
+        "operationId": "get_source_checkpoint",
+        "parameters": [
+          {
+            "description": "Configured source sync receiving the page.",
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "description": "Configured source sync receiving the page.",
+              "minLength": 1,
+              "title": "Sync Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCheckpointResponse"
+                }
+              }
+            },
+            "description": "The committed source checkpoint."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Get the committed source checkpoint",
+        "tags": [
+          "Tables"
+        ]
+      }
+    },
+    "/v1/data-syncs/{sync_id}/pages": {
+      "post": {
+        "description": "Submit one REST page asynchronously.\n\nThe response contains a page id. Poll its GET operation until terminal. Each\npoll is a separate Workato action, so the Summation-side task cost is one\nsubmit action plus the number of status polls actually performed.",
+        "operationId": "submit_source_page",
+        "parameters": [
+          {
+            "description": "Configured source sync receiving the page.",
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "description": "Configured source sync receiving the page.",
+              "minLength": 1,
+              "title": "Sync Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourcePageSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcePageSubmitResponse"
+                }
+              }
+            },
+            "description": "Terminal result for an idempotent replay or a checkpoint-only transition."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcePageSubmitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Submit a NetSuite REST source page",
+        "tags": [
+          "Tables"
+        ]
+      }
+    },
+    "/v1/data-syncs/{sync_id}/pages/{page_id}": {
+      "get": {
+        "description": "Return page status and the last fully committed source checkpoint.",
+        "operationId": "get_source_page",
+        "parameters": [
+          {
+            "description": "Configured source sync receiving the page.",
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "description": "Configured source sync receiving the page.",
+              "minLength": 1,
+              "title": "Sync Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Source page identifier returned by submission.",
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "description": "Source page identifier returned by submission.",
+              "minLength": 1,
+              "title": "Page Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcePageStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Get a source page",
+        "tags": [
+          "Tables"
         ]
       }
     },
@@ -8186,6 +10823,16 @@
             },
             "description": "Resource not found or not accessible."
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workspace cannot complete imports: data-table creation is not enabled for this organization (code `feature_not_enabled`). The uploaded file is stored and unaffected; ask a Summation administrator to enable the feature."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -9475,7 +12122,7 @@
         ]
       },
       "post": {
-        "description": "Create a schedule for a supported Summation resource. Set kind to choose the target type and request schema. The first supported kind is playbook.",
+        "description": "Create a schedule for a supported Summation resource. Set kind to choose the target type and request schema. The first supported kind is playbook. When workflows are enabled for the organization, scheduling new work belongs to workflows: this operation refuses, and you create a workflow with a schedule trigger through POST /v1/workflows instead. Existing schedules stay listable and editable here either way.",
         "operationId": "create_schedule",
         "requestBody": {
           "content": {
@@ -10758,8 +13405,22 @@
     },
     "/v1/table-imports": {
       "post": {
-        "description": "Import an uploaded file asset into an analyzable table. Use this after creating an upload URL and optionally previewing the asset. For database-backed data, attach datasets on the connection instead of importing files here.",
+        "description": "Import an uploaded file asset into an analyzable table. Use this after creating an upload URL and optionally previewing the asset. import_type NEW creates a table and refuses a name that already exists (409); FULL_REFRESH and INCREMENTAL_REFRESH both replace a previously imported table's rows (they are equivalent for file imports today) and therefore require confirm=true (400 otherwise). For database-backed data, attach datasets on the connection instead of importing files here.",
         "operationId": "create_table_import",
+        "parameters": [
+          {
+            "description": "Required (true) when import_type is FULL_REFRESH or INCREMENTAL_REFRESH \u2014 both replace the existing table's rows.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Required (true) when import_type is FULL_REFRESH or INCREMENTAL_REFRESH \u2014 both replace the existing table's rows.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11839,6 +14500,652 @@
           }
         ],
         "summary": "Fetch table data",
+        "tags": [
+          "Tables"
+        ]
+      }
+    },
+    "/v1/tables/{table_id}/ingestion-batches": {
+      "post": {
+        "description": "Start an idempotent multipart CSV upload for a configured table.",
+        "operationId": "create_ingestion_batch",
+        "parameters": [
+          {
+            "description": "Summation table receiving the ingested rows.",
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "description": "Summation table receiving the ingested rows.",
+              "minLength": 1,
+              "title": "Table Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestionBatchCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Create an ingestion batch",
+        "tags": [
+          "Tables"
+        ]
+      }
+    },
+    "/v1/tables/{table_id}/ingestion-batches/{batch_id}": {
+      "delete": {
+        "description": "Abort a batch that has not started applying data.",
+        "operationId": "abort_ingestion_batch",
+        "parameters": [
+          {
+            "description": "Summation table receiving the ingested rows.",
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "description": "Summation table receiving the ingested rows.",
+              "minLength": 1,
+              "title": "Table Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ingestion batch identifier returned by batch creation.",
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "description": "Ingestion batch identifier returned by batch creation.",
+              "minLength": 1,
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Set confirm=true to abort the batch. Required.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true to abort the batch. Required.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Abort an ingestion batch",
+        "tags": [
+          "Tables"
+        ]
+      },
+      "get": {
+        "description": "Return the current batch state and available row counts.",
+        "operationId": "get_ingestion_batch",
+        "parameters": [
+          {
+            "description": "Summation table receiving the ingested rows.",
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "description": "Summation table receiving the ingested rows.",
+              "minLength": 1,
+              "title": "Table Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ingestion batch identifier returned by batch creation.",
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "description": "Ingestion batch identifier returned by batch creation.",
+              "minLength": 1,
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Get an ingestion batch",
+        "tags": [
+          "Tables"
+        ]
+      }
+    },
+    "/v1/tables/{table_id}/ingestion-batches/{batch_id}/commit": {
+      "post": {
+        "description": "Complete the multipart upload and start asynchronous table ingestion.",
+        "operationId": "commit_ingestion_batch",
+        "parameters": [
+          {
+            "description": "Summation table receiving the ingested rows.",
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "description": "Summation table receiving the ingested rows.",
+              "minLength": 1,
+              "title": "Table Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ingestion batch identifier returned by batch creation.",
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "description": "Ingestion batch identifier returned by batch creation.",
+              "minLength": 1,
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestionBatchCommitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Commit an ingestion batch",
+        "tags": [
+          "Tables"
+        ]
+      }
+    },
+    "/v1/tables/{table_id}/ingestion-batches/{batch_id}/parts/{part_number}/upload-url": {
+      "post": {
+        "description": "Create a short-lived URL for uploading one numbered CSV part.",
+        "operationId": "create_ingestion_batch_part_upload",
+        "parameters": [
+          {
+            "description": "Summation table receiving the ingested rows.",
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "description": "Summation table receiving the ingested rows.",
+              "minLength": 1,
+              "title": "Table Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ingestion batch identifier returned by batch creation.",
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "description": "Ingestion batch identifier returned by batch creation.",
+              "minLength": 1,
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "One-based multipart upload sequence number.",
+            "in": "path",
+            "name": "part_number",
+            "required": true,
+            "schema": {
+              "description": "One-based multipart upload sequence number.",
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Part Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "tables:append"
+            ]
+          }
+        ],
+        "summary": "Create a batch part upload URL",
         "tags": [
           "Tables"
         ]
@@ -12977,6 +16284,1348 @@
           "Views"
         ]
       }
+    },
+    "/v1/workflows": {
+      "get": {
+        "description": "List the workflows you own, newest page first. Narrow to one project with project_id. Workflows in every state are returned, including paused and archived ones, so read the status field rather than assuming a listed workflow runs.",
+        "operationId": "list_workflows",
+        "parameters": [
+          {
+            "description": "Only list workflows in this project.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only list workflows in this project.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Token from a previous page's next_page_token.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Token from a previous page's next_page_token.",
+              "title": "Page Token"
+            }
+          },
+          {
+            "description": "Workflows per page, 1 to 100.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "description": "Workflows per page, 1 to 100.",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List workflows",
+        "tags": [
+          "Workflows"
+        ]
+      },
+      "post": {
+        "description": "Create a workflow in a project you can edit. The workflow is created as a draft and runs nothing until you activate it. You become its owner, and its runs execute as you.",
+        "operationId": "create_workflow",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Create workflow",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/v1/workflows/node-types": {
+      "get": {
+        "description": "List the node types you may use in a workflow graph, with the id to put in a node's type field. The list reflects what your organization has enabled, so build a graph only from the types it returns.",
+        "operationId": "list_workflow_node_types",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowNodeTypeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List workflow node types",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/v1/workflows/{workflow_id}": {
+      "get": {
+        "description": "Show one workflow you own, with its triggers, its graph, and the revision to pass back when you update or activate it.",
+        "operationId": "get_workflow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "Show workflow",
+        "tags": [
+          "Workflows"
+        ]
+      },
+      "put": {
+        "description": "Replace a workflow's editable state. The request is the complete desired state: triggers it omits are deleted, and a graph it omits is left untouched. Editing changes what the next activation would run, never what an active schedule is running now.",
+        "operationId": "update_workflow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Update workflow",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/v1/workflows/{workflow_id}/activate": {
+      "post": {
+        "description": "Freeze the workflow as it stands into a new version, make that the version it runs, and set it active. From here its schedules fire that frozen definition, so this can start sending outbound email and Slack messages to the recipients the workflow names. Later edits do not change what an activated workflow runs \u2014 activate again to ship them.",
+        "operationId": "activate_workflow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowActivateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowActivationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Activate workflow",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/v1/workflows/{workflow_id}/runs": {
+      "get": {
+        "description": "List a workflow's runs, newest first, each with its per-step or per-node detail so you can see where a run stopped and what it produced.",
+        "operationId": "list_workflow_runs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Token from a previous page's next_page_token.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Token from a previous page's next_page_token.",
+              "title": "Page Token"
+            }
+          },
+          {
+            "description": "Runs per page, 1 to 100.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "description": "Runs per page, 1 to 100.",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List workflow runs",
+        "tags": [
+          "Workflows"
+        ]
+      },
+      "post": {
+        "description": "Start one run of a workflow immediately. The run executes as the workflow's owner and does everything the workflow says, including sending outbound email and Slack messages to the recipients it names. Pass a fresh request_id per run; retrying with the same one returns the run already started.",
+        "operationId": "run_workflow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowRunCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Run workflow now",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/v1/workflows/{workflow_id}/runs/{run_id}": {
+      "get": {
+        "description": "Show one run of a workflow, with its per-step or per-node detail.",
+        "operationId": "get_workflow_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "Show workflow run",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/v1/workflows/{workflow_id}/versions": {
+      "get": {
+        "description": "List a workflow's frozen versions, newest first. Each one is what an activation shipped, with the workflow revision it was frozen from \u2014 which is how you tell whether the workflow has been edited since it was last activated.",
+        "operationId": "list_workflow_versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Token from a previous page's next_page_token.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Token from a previous page's next_page_token.",
+              "title": "Page Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The workflows service is temporarily unavailable. Retry this request shortly."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List workflow versions",
+        "tags": [
+          "Workflows"
+        ]
+      }
     }
   },
   "tags": [
@@ -13043,6 +17692,10 @@
     {
       "description": "Schedule and schedule run inspection.",
       "name": "Schedules"
+    },
+    {
+      "description": "Workflows: what they run, when they run, and where their output is delivered.",
+      "name": "Workflows"
     }
   ]
 }
