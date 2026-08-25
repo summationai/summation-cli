@@ -49,6 +49,8 @@ def _load_json_array(path: Path, flag: str, *, shape_hint: str) -> list:
 
 def _unwrap_workflow_document(raw: dict) -> dict:
     """Accept a bare workflow, ``{data: ...}``, or a CLI ``show`` result envelope."""
+    if isinstance(raw.get("result"), dict):
+        raw = raw["result"]
     if isinstance(raw.get("data"), dict):
         raw = raw["data"]
     if isinstance(raw.get("workflow"), dict):
@@ -316,14 +318,16 @@ def update_workflow(
             # to this workflow and a full-replace PUT would reassign it.
             invalid_request(
                 f"Workflow {workflow_id} has no project id to reuse.",
-                "Pass --project with the id from `sumcli workflows show`, or provide --body-file.",
+                "Pass --project, or supply a --body-file carrying projectId "
+                "(the unedited output of `sumcli workflows show` works as-is).",
             )
 
         resolved_title = title or _field(base, "title")
         if not isinstance(resolved_title, str) or not resolved_title:
             invalid_request(
                 "Workflow update needs a title.",
-                "Pass --title or provide one via --body-file / an existing show payload.",
+                "Pass --title, or supply a --body-file carrying title "
+                "(the unedited output of `sumcli workflows show` works as-is).",
             )
 
         if triggers_override is not None:

@@ -281,6 +281,84 @@ def test_update_body_file_round_trip(tmp_path: Path) -> None:
     assert payload["expected_revision"] == 2
 
 
+def test_update_body_file_accepts_real_show_output(tmp_path: Path) -> None:
+    """The documented `show` -> `--body-file` round-trip must preserve stored state.
+
+    The body file is the *actual* stdout of `sumcli workflows show`, not a
+    hand-written {"data": ...} envelope: the workflow sits under `result.workflow`,
+    and failing to unwrap that builds a full-replace PUT that drops triggers,
+    description, and output_folder.
+    """
+    workflow = {
+        "id": "wf_1",
+        "projectId": "proj_REAL",
+        "title": "Old title",
+        "description": "Quarterly board deck summary",
+        "outputFolder": "/Reports",
+        "status": "draft",
+        "graph": {"nodes": [], "edges": []},
+        "triggers": [{"id": "tr_1", "type": "schedule", "cron": "0 9 * * 1"}],
+        "revision": 3,
+    }
+
+    show_result, _ = _run(["workflows", "show", "wf_1"], {"data": workflow})
+    assert show_result.exit_code == 0, show_result.stdout
+
+    body_path = tmp_path / "wf.json"
+    body_path.write_text(show_result.stdout)
+
+    result, client = _run(
+        [
+            "workflows",
+            "update",
+            "wf_1",
+            "--body-file",
+            str(body_path),
+            "--title",
+            "New title",
+            "--expected-revision",
+            "3",
+        ],
+        {"data": {"id": "wf_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[0] == ("PUT", "/v1/workflows/wf_1")
+    payload = client.request.call_args[1]["json"]
+    assert payload["project_id"] == "proj_REAL"
+    assert payload["title"] == "New title"
+    assert payload["description"] == "Quarterly board deck summary"
+    assert payload["output_folder"] == "/Reports"
+    assert payload["status"] == "draft"
+    assert payload["graph"] == {"nodes": [], "edges": []}
+    assert payload["triggers"] == [{"id": "tr_1", "type": "schedule", "cron": "0 9 * * 1"}]
+    assert payload["expected_revision"] == 3
+
+
+def test_update_show_output_resolves_project_without_project_flag(tmp_path: Path) -> None:
+    """`--body-file` from `show` carries projectId, so --project is not required."""
+    workflow = {"id": "wf_1", "projectId": "proj_REAL", "title": "Old", "revision": 1}
+    show_result, _ = _run(["workflows", "show", "wf_1"], {"data": workflow})
+    body_path = tmp_path / "wf.json"
+    body_path.write_text(show_result.stdout)
+
+    result, client = _run(
+        [
+            "workflows",
+            "update",
+            "wf_1",
+            "--body-file",
+            str(body_path),
+            "--title",
+            "New",
+            "--expected-revision",
+            "1",
+        ],
+        {"data": {"id": "wf_1"}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[1]["json"]["project_id"] == "proj_REAL"
+
+
 def test_activate_requires_confirm() -> None:
     result, client = _run(["workflows", "activate", "wf_1", "--expected-revision", "1"])
     assert result.exit_code != 0
