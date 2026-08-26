@@ -186,11 +186,8 @@ usual path after `grid create --kind data`. `append` (`POST`) is append-only and
 you to supply `s_id` in each row.
 
 `--key-column` names the business key used to match rows on upsert, not the physical
-primary key: every data table already has an integer `s_id` primary key and a created-at
-timestamp added for you. Max 50 columns per create.
-
-> **Note:** data-table creation is gated per environment and may return
-> `not_implemented`. `--kind calc` (the default, `--query`-defined) is unaffected.
+primary key: every data table already has an integer `s_id` primary key and an
+`s_created_at` timestamp added for you. Max 50 columns per create.
 
 ### Existing project file → grid table
 

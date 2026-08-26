@@ -38,11 +38,15 @@ _COLUMN_TYPES = (
     "uuid",
 )
 
-# The row store owns these names: the platform adds an integer s_id primary key and its own
-# _sm_* bookkeeping columns when the table is built. Declaring one is a 422 upstream.
-_RESERVED_COLUMN_NAMES = frozenset(
-    {"s_id", "_sm_created_at", "_sm_event_at", "_sm_deleted", "_sm_branch", "_sm_event_by"}
-)
+# Names the row store adds on create (see GridTableCreateRequest.columns in the live spec).
+# s_id is the integer primary key; s_created_at is the created-at timestamp. Any _sm_* name
+# is row-store internal and must not be declared either.
+_RESERVED_COLUMN_NAMES = frozenset({"s_id", "s_created_at"})
+
+
+def _is_reserved_column_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in _RESERVED_COLUMN_NAMES or lowered.startswith("_sm_")
 
 # One column is one schema-change plan upstream, applied in order. The API caps a create at 50.
 _MAX_COLUMNS = 50
@@ -89,11 +93,11 @@ def _validate_columns(columns: list[dict]) -> None:
     seen: set[str] = set()
     for col in columns:
         lowered = col["name"].lower()
-        if lowered in _RESERVED_COLUMN_NAMES:
+        if _is_reserved_column_name(col["name"]):
             invalid_request(
                 f"Column {col['name']!r} belongs to the table's row store and cannot be declared.",
-                "Every data table already has an integer s_id primary key and a "
-                "created-at timestamp.",
+                "Every data table already has an integer s_id primary key and an "
+                "s_created_at timestamp.",
             )
         if lowered in seen:
             invalid_request(
@@ -147,7 +151,7 @@ def _load_columns_file(path: Path) -> list[dict]:
                 f"--columns-file entry {index} needs a non-empty string name.",
                 f"Use objects, e.g. {_COLUMN_SHAPE_HINT}.",
             )
-        if not isinstance(col_type, str) or col_type.lower() not in _COLUMN_TYPES:
+        if not isinstance(col_type, str) or col_type.strip().lower() not in _COLUMN_TYPES:
             invalid_request(
                 f"--columns-file entry {index} has unknown type {col_type!r}.",
                 f"Use one of: {', '.join(_COLUMN_TYPES)}.",
@@ -158,7 +162,9 @@ def _load_columns_file(path: Path) -> list[dict]:
                 f"--columns-file entry {index} has a non-boolean nullable.",
                 "Use true or false.",
             )
-        columns.append({"name": name.strip(), "type": col_type.lower(), "nullable": nullable})
+        columns.append(
+            {"name": name.strip(), "type": col_type.strip().lower(), "nullable": nullable}
+        )
     return columns
 
 

@@ -223,13 +223,9 @@ sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "cou
 | `tables append` | `POST` | Primary key `s_id` (caller-assigned, append-only) |
 
 `--key-column` on create names the **business key** matched on upsert, not the physical
-primary key. Every data table already has an integer `s_id` primary key and a
-created-at timestamp, added for you — declaring either in `--column` is refused.
+primary key. Every data table already has an integer `s_id` primary key and an
+`s_created_at` timestamp, added for you — declaring either in `--column` is refused.
 A single create takes at most 50 columns.
-
-> **Note:** data-table creation is gated per environment. If it returns
-> `not_implemented` ("Creating data tables is not enabled in this environment"), the
-> flag is off for that tenant; `--kind calc` is unaffected.
 
 ### Existing project file → grid table
 

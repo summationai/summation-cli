@@ -152,6 +152,46 @@ def test_tables_append_requires_one_source(monkeypatch) -> None:
     assert body["error"]["code"] == "INVALID_FLAGS"
 
 
+def test_tables_append_rejects_empty_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_cm, mock_client = _append_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "append", "tbl-1", "--rows", "[]"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_ROWS"
+    mock_client.request.assert_not_called()
+
+
+def test_tables_append_rejects_too_many_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    rows = json.dumps([{"s_id": str(i)} for i in range(501)])
+    mock_cm, mock_client = _append_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "append", "tbl-1", "--rows", rows])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_ROWS"
+    assert "501 rows" in body["error"]["message"]
+    mock_client.request.assert_not_called()
+
+
+def test_tables_append_missing_file_is_a_cli_error(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    missing = tmp_path / "missing.json"
+    mock_cm, mock_client = _append_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "append", "tbl-1", "--file", str(missing)])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "Cannot read --file" in body["error"]["message"]
+    mock_client.request.assert_not_called()
+
+
 def test_tables_append_partial_exits_nonzero(monkeypatch) -> None:
     monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
@@ -291,6 +331,18 @@ def test_tables_upsert_rejects_s_id_in_rows(monkeypatch) -> None:
     assert result.exit_code == 1
     body = json.loads(result.stdout.strip())
     assert body["error"]["code"] == "INVALID_ROWS"
+
+
+def test_tables_upsert_rejects_empty_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_cm, mock_client = _upsert_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "upsert", "tbl-1", "--rows", "[]"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_ROWS"
+    mock_client.request.assert_not_called()
 
 
 def test_tables_upsert_partial_exits_nonzero(monkeypatch) -> None:

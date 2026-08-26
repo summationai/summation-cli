@@ -184,16 +184,13 @@ Rules the API enforces, checked locally first so a wrong schema costs no round t
 - `--column` is `name:type[:null|notnull]`; order is kept, nullable is the default.
 - Types: `string`, `integer`, `decimal`, `big_decimal`, `boolean`, `date`, `datetime`,
   `json`, `uuid`. Nothing else.
-- Do **not** declare `s_id` or any `_sm_*` column — the row store adds an integer `s_id`
-  primary key and a created-at timestamp itself.
+- Do **not** declare `s_id`, `s_created_at`, or any `_sm_*` column — the row store adds
+  an integer `s_id` primary key and an `s_created_at` timestamp itself.
 - `--key-column` is the **business key** matched on upsert, not the primary key, and must
   name a column you declared.
 - 50 columns max per create. Use `--columns-file <path>` (JSON array) for a long schema.
 - `--query` and `--column` are mutually exclusive: `--kind calc` takes a query,
   `--kind data` takes columns.
-
-If the create returns `not_implemented`, data tables are gated off for that environment;
-`--kind calc` still works.
 
 ### Data connections (add, verify, remove)
 

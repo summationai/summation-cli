@@ -14,6 +14,7 @@ from sum_cli.commands import (
     ProfileOption,
     api_client,
     api_confirm_params,
+    load_json_array,
     require_confirm,
     require_project,
     unwrap_data,
@@ -26,6 +27,13 @@ app = typer.Typer(no_args_is_help=True)
 
 _IMPORT_TERMINAL_STATES = frozenset({"COMPLETED", "FAILED", "SUCCEEDED", "SUCCESS", "ERROR"})
 _IMPORT_FAILED_STATES = frozenset({"FAILED", "ERROR"})
+
+_ROWS_SHAPE_HINT = '[{"col": "val"}]'
+_MIN_ROWS_PER_REQUEST = 1
+_MAX_ROWS_PER_REQUEST = 500
+_ROWS_PER_REQUEST_HELP = (
+    f" Send {_MIN_ROWS_PER_REQUEST}–{_MAX_ROWS_PER_REQUEST} row objects per request."
+)
 
 
 def _resolve_table_id(c, table_name: str) -> str | None:
@@ -56,6 +64,26 @@ def _emit_import_wait_terminal(terminal: dict) -> None:
     exit_if_stream_failed(terminal)
 
 
+def _validate_row_count(parsed: list) -> None:
+    count = len(parsed)
+    if count < _MIN_ROWS_PER_REQUEST:
+        emit_error(
+            err(
+                "INVALID_ROWS",
+                "Rows must include at least one object.",
+                f"Pass a non-empty JSON array with up to {_MAX_ROWS_PER_REQUEST} rows.",
+            )
+        )
+    if count > _MAX_ROWS_PER_REQUEST:
+        emit_error(
+            err(
+                "INVALID_ROWS",
+                f"{count} rows exceeds the {_MAX_ROWS_PER_REQUEST}-row limit per request.",
+                f"Split the load into batches of at most {_MAX_ROWS_PER_REQUEST} rows.",
+            )
+        )
+
+
 def _load_rows_from_flags(
     *,
     rows: str | None,
@@ -69,21 +97,28 @@ def _load_rows_from_flags(
                 'Pass --rows \'[{"col": "val"}]\' or --file rows.json.',
             )
         )
-    raw = file.read_text() if file is not None else rows
-    try:
-        parsed = json.loads(raw)  # type: ignore[arg-type]
-    except json.JSONDecodeError as exc:
-        emit_error(
-            err("INVALID_JSON", f"Rows are not valid JSON: {exc}.", "Pass a JSON array of objects.")
-        )
-    if not isinstance(parsed, list):
-        emit_error(
-            err(
-                "INVALID_ROWS",
-                "Rows must be a JSON array of objects.",
-                "Wrap your rows in [ ... ].",
+    if file is not None:
+        parsed = load_json_array(file, "--file", shape_hint=_ROWS_SHAPE_HINT)
+    else:
+        try:
+            parsed = json.loads(rows)  # type: ignore[arg-type]
+        except json.JSONDecodeError as exc:
+            emit_error(
+                err(
+                    "INVALID_JSON",
+                    f"Rows are not valid JSON: {exc}.",
+                    "Pass a JSON array of objects.",
+                )
             )
-        )
+        if not isinstance(parsed, list):
+            emit_error(
+                err(
+                    "INVALID_ROWS",
+                    "Rows must be a JSON array of objects.",
+                    "Wrap your rows in [ ... ].",
+                )
+            )
+    _validate_row_count(parsed)
     return parsed
 
 
@@ -231,11 +266,17 @@ def append_rows(
     table_id: Annotated[str, typer.Argument()],
     rows: Annotated[
         str | None,
-        typer.Option("--rows", help="Rows as an inline JSON array of objects."),
+        typer.Option(
+            "--rows",
+            help=f"Rows as an inline JSON array of objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
     ] = None,
     file: Annotated[
         Path | None,
-        typer.Option("--file", help="Path to a JSON file holding an array of row objects."),
+        typer.Option(
+            "--file",
+            help=f"Path to a JSON file holding an array of row objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
     ] = None,
     profile: ProfileOption = None,
 ) -> None:
@@ -257,11 +298,17 @@ def upsert_rows(
     table_id: Annotated[str, typer.Argument()],
     rows: Annotated[
         str | None,
-        typer.Option("--rows", help="Rows as an inline JSON array of objects."),
+        typer.Option(
+            "--rows",
+            help=f"Rows as an inline JSON array of objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
     ] = None,
     file: Annotated[
         Path | None,
-        typer.Option("--file", help="Path to a JSON file holding an array of row objects."),
+        typer.Option(
+            "--file",
+            help=f"Path to a JSON file holding an array of row objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
     ] = None,
     key_column: Annotated[
         list[str] | None,

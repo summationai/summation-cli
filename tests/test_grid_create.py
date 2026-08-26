@@ -172,6 +172,10 @@ def test_columns_file_defaults_nullable_to_true(tmp_path: Path) -> None:
             "belongs to the table's row store",
         ),
         (
+            ["grid", "create", "t", "--kind", "data", "--column", "s_created_at:datetime"],
+            "belongs to the table's row store",
+        ),
+        (
             ["grid", "create", "t", "--kind", "data", "--column", "_sm_created_at:datetime"],
             "belongs to the table's row store",
         ),
