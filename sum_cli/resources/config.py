@@ -35,7 +35,10 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command("import-env")
 def import_env(
-    env_file: Annotated[Path, typer.Argument(help="Skill-style env file (.summation-config).")],
+    env_file: Annotated[
+        Path,
+        typer.Argument(help="Env file with SUM_API_* keys (any path; not read live)."),
+    ],
     profile: Annotated[str, typer.Option("--profile", help="Profile name to create or replace.")],
     activate: Annotated[
         bool,
@@ -54,7 +57,7 @@ def import_env(
             err(
                 "FILE_NOT_FOUND",
                 f"Env file not found: {env_file}",
-                "Pass a path to .summation-config or similar.",
+                "Pass a path to an env file with SUM_API_CLIENT_ID and SUM_API_CLIENT_SECRET.",
             )
         )
     except EnvImportError as exc:
@@ -149,7 +152,7 @@ def show_profile(
             err(
                 "PROFILE_NOT_FOUND",
                 f"Profile '{cfg.profile}' not in {path}.",
-                "Run sumcli config set-profile to create it.",
+                "Run `sumcli config list` or `sumcli config set-profile` to create it.",
             )
         )
     redacted = {k: (redact(v) if k in SECRET_KEYS else v) for k, v in section.items()}
@@ -192,7 +195,7 @@ def use_profile(
             err(
                 "PROFILE_NOT_FOUND",
                 f"No profile '{name}' in {path}.",
-                "Run sumcli config set-profile to add it.",
+                "Run `sumcli config list` or `sumcli config set-profile` to add it.",
             )
         )
     set_active_profile(name)

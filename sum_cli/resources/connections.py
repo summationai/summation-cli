@@ -68,13 +68,10 @@ def list_connections(
     with api_client(ctx, profile) as c:
         body = c.request("GET", "/v1/connections/data")
     data = unwrap_data(body or {}, "data")
-    items = (
-        data
-        if isinstance(data, list)
-        else (data.get("connections", []) if isinstance(data, dict) else [])
-    )
-    if not isinstance(items, list):
-        items = []
+    if data is None and isinstance(body, dict):
+        # Some tenants return {connections, total} without a data wrapper.
+        data = body
+    items = extract_list(data, "connections")
     listed = truncate_list(items, count=count)
     emit(ok({"connections": listed["items"], **{k: v for k, v in listed.items() if k != "items"}}))
 

@@ -294,9 +294,6 @@ Most users should use device login; admin-managed accounts can use M2M. Power us
 
 **Config file:** `~/.summation/summation-config` (TOML), overridable with `SUMMATION_CONFIG_FILE`.
 
-Existing `~/.summation/config` users should rename that file to
-`~/.summation/summation-config`; the TOML format is unchanged.
-
 ```toml
 [_meta]
 active_profile = "tenant_staging"
@@ -328,7 +325,7 @@ Optional per-profile fields: `device_login_credential`, `access_token`, `token_e
 | `config list` | List profiles (secrets not shown) |
 | `config show [profile]` | Show one profile from file (secrets redacted) |
 | `config active` | Resolved effective config: active profile, account, default project, credentials |
-| `config import-env` | Import `SUM_API_*` variables from a skill-style env file into `~/.summation/summation-config` |
+| `config import-env` | Import `SUM_API_*` from an env file into `~/.summation/summation-config` |
 | `config set-profile` | Create or replace a profile (`--confirm` not required) |
 | `config copy-profile` | Clone a profile |
 | `config delete-profile` | Remove a profile (**`--confirm`**) |

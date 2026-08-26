@@ -99,13 +99,15 @@ sumcli --profile myenv auth login --m2m
 
 Useful: `auth whoami`, `auth status`, `auth token` (redacted), `config active`, `config list`, `config set-project <id>`.
 
+`config import-env <file>` is a one-time bridge: copy `SUM_API_*` from any env file (e.g. a skill or CI `.env`) into `~/.summation/summation-config`. sumcli does not read other config paths at runtime.
+
 ### Precedence (field-specific)
 
 | Field | Order (highest first) |
 |-------|------------------------|
 | Profile | `--profile` → `SUMMATION_PROFILE` → `[_meta].active_profile` → `default` |
 | Base URL | `--base-url` → `SUM_API_BASE_URL` → profile `base_url` → built-in fallback (not a real tenant host) |
-| Credentials | `SUM_API_*` env → profile section |
+| Credentials | Profile section in `~/.summation/summation-config` only (not live `SUM_API_*` env) |
 | Project | `--project` → profile `default_project` → `SUMMATION_PROJECT` |
 
 Auth resolution: `device_login_credential` → static `access_token` → M2M client id/secret exchange. Identity comes from the bearer token only.
@@ -119,7 +121,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `tenant` | org/tenant metadata |
 | `projects` | CRUD, `current` |
 | `catalog` | attach/detach/list project tables & views |
-| `tables` | grid tables, CSV `import`, `append`, `upsert`, `data` |
+| `tables` | grid tables, CSV `import`, `append`, `upsert`, CALCULATION `create-calc`/`materialize`, `data` |
 | `views` | Summation views |
 | `queries` | read-only SQL (`queries run --sql` / `--file`); cap rows with SQL `LIMIT` or `--limit` (API default 100, max 10000/request; higher auto-paginates) |
 | `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |
@@ -130,7 +132,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `files` | project file upload/download/list/delete |
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
 | `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
-| `grid` | status, sync, lineage, push, `create` (calc table from a query, or empty data table from columns) |
+| `grid` | status, sync, lineage, push, `create` (calc from query or empty data table from columns), `materialize` |
 
 ## Common workflows
 

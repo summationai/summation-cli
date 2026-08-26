@@ -13,7 +13,11 @@ DEFAULT_CONFIG_PATH = Path.home() / ".summation" / "summation-config"
 
 
 def config_path() -> Path:
-    return Path(os.environ.get("SUMMATION_CONFIG_FILE", DEFAULT_CONFIG_PATH))
+    if os.environ.get("SUMMATION_CONFIG_FILE"):
+        return Path(os.environ["SUMMATION_CONFIG_FILE"])
+    from sum_cli.config_paths import resolve_config_path
+
+    return resolve_config_path()
 
 
 def read_all(path: Path | None = None) -> dict[str, dict[str, str]]:

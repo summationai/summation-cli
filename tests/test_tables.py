@@ -408,6 +408,30 @@ def test_tables_import_wait_failed_status_exits_nonzero(monkeypatch, tmp_path: P
     assert last["error"]["code"] == "IMPORT_FAILED"
 
 
+def test_tables_import_default_is_new_without_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            ["tables", "import", "--table", "t1", "--local", "--path", str(csv), "--no-wait"],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.args[1] == "/v1/table-imports"
+    assert not post.kwargs.get("params")
+    assert post.kwargs["json"]["import_type"] == "NEW"
+
+
 def test_tables_import_refresh_sends_full_refresh_and_confirm(monkeypatch, tmp_path: Path) -> None:
     """--refresh replaces an existing table's rows: the API requires confirm=true
     for FULL_REFRESH, and the explicit flag is the user's confirmation."""
@@ -444,7 +468,34 @@ def test_tables_import_refresh_sends_full_refresh_and_confirm(monkeypatch, tmp_p
     assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
 
 
-def test_tables_import_default_is_new_without_confirm(monkeypatch, tmp_path: Path) -> None:
+def test_tables_import_explicit_full_refresh_requires_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    result = runner.invoke(
+        app,
+        [
+            "tables",
+            "import",
+            "--table",
+            "t1",
+            "--local",
+            "--path",
+            str(csv),
+            "--no-wait",
+            "--import-type",
+            "FULL_REFRESH",
+        ],
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "--confirm" in body["fix"]
+
+
+def test_tables_import_explicit_full_refresh_with_confirm(monkeypatch, tmp_path: Path) -> None:
     csv = tmp_path / "data.csv"
     csv.write_text("col1\n1\n")
     mock_cm = _import_mocks(csv)
@@ -454,7 +505,19 @@ def test_tables_import_default_is_new_without_confirm(monkeypatch, tmp_path: Pat
     with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
         result = runner.invoke(
             app,
-            ["tables", "import", "--table", "t1", "--local", "--path", str(csv), "--no-wait"],
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--import-type",
+                "FULL_REFRESH",
+                "--confirm",
+            ],
         )
     assert result.exit_code == 0
     client = mock_cm.__enter__.return_value
@@ -463,6 +526,5 @@ def test_tables_import_default_is_new_without_confirm(monkeypatch, tmp_path: Pat
         for c in client.request.call_args_list
         if c.args[0] == "POST" and "table-imports" in c.args[1]
     )
-    assert post.args[1] == "/v1/table-imports"
-    assert not post.kwargs.get("params")
-    assert post.kwargs["json"]["import_type"] == "NEW"
+    assert post.kwargs["params"] == {"confirm": "true"}
+    assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
