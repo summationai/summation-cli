@@ -121,7 +121,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `tenant` | org/tenant metadata |
 | `projects` | CRUD, `current` |
 | `catalog` | attach/detach/list project tables & views |
-| `tables` | grid tables, CSV `import`, `append`, `upsert`, CALCULATION `create-calc`/`materialize`, `data` |
+| `tables` | grid tables, CSV `import`, `append`, `upsert`, `data` |
 | `views` | Summation views |
 | `queries` | read-only SQL (`queries run --sql` / `--file`); cap rows with SQL `LIMIT` or `--limit` (API default 100, max 10000/request; higher auto-paginates) |
 | `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |

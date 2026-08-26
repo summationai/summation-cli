@@ -24,7 +24,12 @@ def resolve_config_path() -> Path:
     if DEFAULT_CONFIG_PATH.exists():
         return DEFAULT_CONFIG_PATH
     if _LEGACY_CONFIG_PATH.exists():
-        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _LEGACY_CONFIG_PATH.rename(DEFAULT_CONFIG_PATH)
+        try:
+            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _LEGACY_CONFIG_PATH.rename(DEFAULT_CONFIG_PATH)
+        except OSError:
+            # The migration is opportunistic, so a read-only ~/.summation must not take
+            # every command down: the legacy file is still readable, so read it in place.
+            return _LEGACY_CONFIG_PATH
         return DEFAULT_CONFIG_PATH
     return DEFAULT_CONFIG_PATH

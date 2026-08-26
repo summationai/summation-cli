@@ -528,3 +528,138 @@ def test_tables_import_explicit_full_refresh_with_confirm(monkeypatch, tmp_path:
     )
     assert post.kwargs["params"] == {"confirm": "true"}
     assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
+
+
+def test_tables_import_type_is_case_insensitive(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--import-type",
+                "full_refresh",
+                "--confirm",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
+
+
+def test_tables_import_incremental_refresh_requires_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    result = runner.invoke(
+        app,
+        [
+            "tables",
+            "import",
+            "--table",
+            "t1",
+            "--local",
+            "--path",
+            str(csv),
+            "--no-wait",
+            "--import-type",
+            "INCREMENTAL_REFRESH",
+        ],
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "--confirm" in body["fix"]
+
+
+def test_tables_import_incremental_refresh_with_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--import-type",
+                "INCREMENTAL_REFRESH",
+                "--confirm",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["params"] == {"confirm": "true"}
+    assert post.kwargs["json"]["import_type"] == "INCREMENTAL_REFRESH"
+
+
+def test_tables_import_accepts_top_level_column_mappings_array(
+    monkeypatch, tmp_path: Path
+) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mappings = tmp_path / "mappings.json"
+    mappings.write_text('[{"sourceColumn": "col1", "targetColumn": "col1"}]')
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--column-mappings-file",
+                str(mappings),
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["json"]["column_mappings"] == [
+        {"sourceColumn": "col1", "targetColumn": "col1"}
+    ]

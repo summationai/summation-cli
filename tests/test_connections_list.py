@@ -63,3 +63,17 @@ def test_list_reads_top_level_connections_without_data_wrapper() -> None:
         "sleeper_nfl",
     ]
     assert body["result"]["total"] == 2
+
+
+def test_list_reads_connectors_key_from_data_wrapper() -> None:
+    result, _ = _run(
+        {
+            "data": {
+                "connectors": [{"id": "c1", "name": "fantasypros_nfl"}],
+                "total": 1,
+            }
+        }
+    )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)
+    assert body["result"]["connections"][0]["id"] == "c1"

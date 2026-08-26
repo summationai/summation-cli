@@ -700,8 +700,6 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         ),
         "append": "Append rows from --rows or --file; each row must include s_id (append-only).",
         "upsert": "Upsert rows by business key from --rows or --file (no s_id in rows).",
-        "create-calc": "Create a CALCULATION table from a SELECT query.",
-        "materialize": "Materialize a CALCULATION table (run its SELECT).",
     },
     "filesystem": {
         "roots": "List drives/roots for the configured site (--provider sharepoint).",

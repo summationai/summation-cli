@@ -15,7 +15,6 @@ from sum_cli.commands import (
     api_client,
     api_confirm_params,
     load_json_array,
-    load_json_object,
     require_confirm,
     require_project,
     unwrap_data,
@@ -28,7 +27,8 @@ app = typer.Typer(no_args_is_help=True)
 
 _IMPORT_TERMINAL_STATES = frozenset({"COMPLETED", "FAILED", "SUCCEEDED", "SUCCESS", "ERROR"})
 _IMPORT_FAILED_STATES = frozenset({"FAILED", "ERROR"})
-_IMPORT_TYPES = frozenset({"NEW", "FULL_REFRESH"})
+_IMPORT_TYPES = frozenset({"NEW", "FULL_REFRESH", "INCREMENTAL_REFRESH"})
+_REFRESH_IMPORT_TYPES = frozenset({"FULL_REFRESH", "INCREMENTAL_REFRESH"})
 
 
 def _resolve_import_options(
@@ -37,22 +37,28 @@ def _resolve_import_options(
     import_type: str | None,
     confirm: bool,
 ) -> tuple[str, bool]:
-    if refresh and import_type and import_type != "FULL_REFRESH":
+    normalized_import_type = import_type.upper() if import_type else None
+    if refresh and normalized_import_type and normalized_import_type != "FULL_REFRESH":
         invalid_request(
             "--refresh implies --import-type FULL_REFRESH.",
             "Drop --import-type or use --import-type FULL_REFRESH without --refresh.",
         )
-    resolved_type = "FULL_REFRESH" if refresh else (import_type or "NEW").upper()
+    resolved_type = "FULL_REFRESH" if refresh else (normalized_import_type or "NEW")
     if resolved_type not in _IMPORT_TYPES:
         invalid_request(
             f"Unsupported --import-type {resolved_type!r}.",
             f"Use one of: {', '.join(sorted(_IMPORT_TYPES))}.",
         )
     resolved_confirm = confirm or refresh
-    if resolved_type == "FULL_REFRESH" and not resolved_confirm:
+    if resolved_type in _REFRESH_IMPORT_TYPES and not resolved_confirm:
+        # Only FULL_REFRESH may be reached via --refresh; naming that shorthand under
+        # INCREMENTAL_REFRESH would talk the caller into a different import type.
+        fix = "Pass --confirm."
+        if resolved_type == "FULL_REFRESH":
+            fix = "Pass --confirm or use --refresh (shorthand for FULL_REFRESH + confirm)."
         invalid_request(
-            "FULL_REFRESH replaces an existing table's rows and requires confirmation.",
-            "Pass --confirm or use --refresh (shorthand for FULL_REFRESH + confirm).",
+            f"{resolved_type} replaces an existing table's rows and requires confirmation.",
+            fix,
         )
     return resolved_type, resolved_confirm
 
@@ -60,18 +66,42 @@ def _resolve_import_options(
 def _load_column_mappings(path: Path | None) -> list:
     if path is None:
         return []
-    parsed = load_json_object(
-        path,
-        "--column-mappings-file",
-        shape_hint='{"column_mappings": [{"sourceColumn": "...", "targetColumn": "..."}]}',
-    )
-    mappings = parsed.get("column_mappings", parsed)
-    if not isinstance(mappings, list):
+    try:
+        parsed = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
         invalid_request(
-            "--column-mappings-file must contain a `column_mappings` array.",
-            'Use {"column_mappings": [...]} or a top-level JSON array.',
+            f"--column-mappings-file is not valid UTF-8 text: {exc}",
+            "Save --column-mappings-file as UTF-8 encoded JSON.",
         )
-    return mappings
+    except ValueError as exc:
+        invalid_request(
+            f"Invalid JSON in --column-mappings-file: {exc}",
+            "Provide a JSON array or an object with a column_mappings array.",
+        )
+    except OSError as exc:
+        invalid_request(
+            f"Cannot read --column-mappings-file: {exc}",
+            "Check that the --column-mappings-file path exists and is readable.",
+        )
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        mappings = parsed.get("column_mappings")
+        if mappings is None:
+            invalid_request(
+                "--column-mappings-file must contain a column_mappings array.",
+                'Use {"column_mappings": [...]} or a top-level JSON array.',
+            )
+        if not isinstance(mappings, list):
+            invalid_request(
+                "--column-mappings-file column_mappings must be a JSON array.",
+                'Use {"column_mappings": [...]} or a top-level JSON array.',
+            )
+        return mappings
+    invalid_request(
+        "--column-mappings-file must contain a JSON array or object.",
+        'Use [{"sourceColumn": "...", "targetColumn": "..."}] or {"column_mappings": [...]}.',
+    )
 
 _ROWS_SHAPE_HINT = '[{"col": "val"}]'
 _MIN_ROWS_PER_REQUEST = 1
@@ -290,41 +320,6 @@ def catalog_update(
     with api_client(ctx, profile) as c:
         body = c.request("PATCH", f"/v1/tables/{table_id}/catalog", json=payload)
     emit(ok({"catalog": unwrap_data(body or {}, "data") or body}))
-
-
-@app.command("create-calc")
-def create_calc_table(
-    ctx: typer.Context,
-    name: Annotated[str, typer.Argument(help="CALCULATION table name.")],
-    query: Annotated[str, typer.Option("--query", help="SELECT query defining the table.")],
-    profile: ProfileOption = None,
-) -> None:
-    """Create a CALCULATION table from a SELECT query."""
-    with api_client(ctx, profile) as c:
-        body = c.request(
-            "POST",
-            "/v1/grid/tables",
-            json={"name": name, "query": query},
-        )
-    emit(ok({"table": unwrap_data(body or {}, "data") or body}))
-
-
-@app.command("materialize")
-def materialize_table(
-    ctx: typer.Context,
-    table_id: Annotated[str, typer.Argument(help="CALCULATION table id.")],
-    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
-    profile: ProfileOption = None,
-) -> None:
-    """Materialize a CALCULATION table (run its SELECT and persist rows)."""
-    params = {"dry_run": True} if dry_run else None
-    with api_client(ctx, profile) as c:
-        body = c.request(
-            "POST",
-            f"/v1/grid/tables/{table_id}/materialize",
-            params=params,
-        )
-    emit(ok({"materialize": unwrap_data(body or {}, "data") or body}))
 
 
 @app.command("delete")
