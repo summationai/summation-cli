@@ -86,8 +86,6 @@ class CallSite:
 UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/v1/auth/logout"): "No sumcli logout; sessions are profile-scoped.",
     ("GET", "/v1/chat-models"): "Chat model listing not exposed in sumcli.",
-    ("POST", "/v1/grid/tables"): "Grid calculation-table creation not exposed in sumcli.",
-    ("POST", "/v1/grid/tables/*/materialize"): "Grid materialize not exposed in sumcli.",
     ("POST", "/v1/projects/*/files/uploads"): "Project file uploads not exposed in sumcli.",
     (
         "POST",
@@ -95,12 +93,9 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ): "Project file uploads not exposed in sumcli.",
     ("GET", "/v1/projects/*/reports"): "Report listing is via files, not a dedicated command.",
     ("DELETE", "/v1/projects/*/reports/*"): "Report delete is via files delete.",
-    ("GET", "/v1/projects/*/reports/*/content"): "Report content export not exposed in sumcli.",
     ("GET", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
     ("POST", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
     ("DELETE", "/v1/sum-apps/*"): "SumApp management not exposed in sumcli.",
-    ("POST", "/v1/tables/*/rows"): "Row append not exposed in sumcli.",
-    ("PUT", "/v1/tables/*/rows"): "Row replace not exposed in sumcli.",
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
     # Sandbox-only (relative to prior prod snapshot) — not part of workflows coverage.
@@ -503,6 +498,22 @@ def blurb_for_call_site(site: CallSite, summaries: dict[tuple[str, str], str]) -
     )
 
 
+def allowlisted_operations_now_covered(spec: dict) -> list[Operation]:
+    """Allow-listed operations a command has since started calling.
+
+    An entry says "not exposed in sumcli". Once a command calls the route the entry is a
+    lie that nothing else catches: ``uncovered_spec_operations`` skips covered operations,
+    so the stale reason survives every refresh. ``grid create`` and ``grid materialize``
+    both carried one for two releases.
+    """
+    covered = cli_operation_keys()
+    allowlisted = set(UNCOVERED_OPERATIONS_ALLOWLIST)
+    return sorted(
+        (op for op in iter_operations(spec) if op.key in allowlisted and op.key in covered),
+        key=lambda o: (o.normalized_path, o.method),
+    )
+
+
 def uncovered_spec_operations(spec: dict) -> list[Operation]:
     covered = cli_operation_keys()
     allowlisted = set(UNCOVERED_OPERATIONS_ALLOWLIST)
@@ -590,7 +601,7 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "connections": "External data source connections.",
     "tables": "Canonical tables and imports.",
     "views": "Summation views.",
-    "grid": "Grid status, sync, and lineage.",
+    "grid": "Grid status, sync, lineage, and table creation (calc or data).",
     "queries": "Read-only SQL execution.",
 }
 
@@ -672,8 +683,19 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "run-show": "Show one workflow run's per-step detail.",
         "node-types": "List node type ids and configs this organization may author.",
     },
+    "grid": {
+        # The bundled snapshot is prod-pinned and still carries the pre-kind summary
+        # ("Create calculation table"), which now names only one of the two kinds.
+        # Drop this entry once a refresh brings "Create grid table" down from prod.
+        "create": (
+            "Create a grid table: --kind calc (default) from --query, "
+            "or --kind data as an empty appendable table from --column/--columns-file."
+        ),
+    },
     "tables": {
         "import": "Import from local file (multi-step; --wait/--no-wait).",
+        "append": "Append rows from --rows or --file; each row must include s_id (append-only).",
+        "upsert": "Upsert rows by business key from --rows or --file (no s_id in rows).",
     },
     "filesystem": {
         "roots": "List drives/roots for the configured site (--provider sharepoint).",

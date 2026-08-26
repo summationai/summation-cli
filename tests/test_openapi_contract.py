@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sum_cli.openapi_doc import (
     UNCOVERED_OPERATIONS_ALLOWLIST,
+    allowlisted_operations_now_covered,
     cli_call_sites_missing_confirm,
     cli_paths_missing_from_spec,
     load_spec,
@@ -49,4 +50,14 @@ def test_allowlist_entries_reference_real_spec_operations() -> None:
     stale = sorted(key for key in UNCOVERED_OPERATIONS_ALLOWLIST if key not in spec_keys)
     assert stale == [], "Allow-list entries no longer exist in the OpenAPI snapshot:\n" + "\n".join(
         f"  {method} {path}" for method, path in stale
+    )
+
+
+def test_allowlist_has_no_entries_the_cli_now_covers() -> None:
+    """An entry claiming a route is unexposed must go when a command starts calling it."""
+    spec = load_spec()
+    stale = allowlisted_operations_now_covered(spec)
+    assert stale == [], (
+        "Allow-list entries name operations sumcli now calls; delete them:\n"
+        + "\n".join(f"  {op.method} {op.path}" for op in stale)
     )

@@ -79,9 +79,9 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer CLI releases are alway
 | `filesystem` | Connected filesystem roots such as SharePoint |
 | `catalog` | Project catalog entries (tables/views attached to a project) |
 | `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`) |
-| `tables` | Grid tables and CSV import (`tables import` is a multi-step HTTP workflow) |
+| `tables` | Grid tables and CSV import (`tables import`); row loads via `append` or `upsert`; also `data`, `import-status`, catalog helpers |
 | `views` | Summation views |
-| `grid` | Grid status, sync, and lineage |
+| `grid` | Grid status, sync, lineage, and table creation (`create --kind calc` or `data`) |
 | `queries` | Read-only SQL execution (`queries run`) |
 
 Run `sumcli | jq '.result.resources'` for the live command tree with action blurbs, or `sumcli <resource> --help` for flags.
@@ -182,6 +182,50 @@ sumcli tables import --remote --path /Customers.csv --table customers
 ```
 
 Step 2 also accepts `--file-id file-...` if you have the ID directly. Internally, `--remote` mode downloads the file's bytes to a temp file, then runs the same upload+import flow as `--local` (sum-api has no direct project-file → grid endpoint today).
+
+### Agent-owned data table (`grid create --kind data`)
+
+`tables import` and `grid create --kind calc` both derive a table from data that already
+exists. When your code owns the rows instead — app state, an operator log, a
+suppression list — create an empty **data** table from a column schema, then load rows
+with **`tables upsert`**:
+
+```bash
+sumcli grid create ops_log --kind data \
+  --column event_id:uuid:notnull \
+  --column op:string \
+  --column count:integer \
+  --column noted_at:datetime \
+  --key-column event_id
+```
+
+Each `--column` is `name:type[:null|notnull]`, and order is kept. Types: `string`,
+`integer`, `decimal`, `big_decimal`, `boolean`, `date`, `datetime`, `json`, `uuid`.
+Columns are nullable unless you pass `:notnull`. For a longer schema, use
+`--columns-file cols.json` with a JSON array instead:
+
+```json
+[{"name": "event_id", "type": "uuid", "nullable": false},
+ {"name": "op", "type": "string"}]
+```
+
+The table accepts rows as soon as the create returns:
+
+```bash
+sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+```
+
+**`tables append` vs `tables upsert`:** both hit `/v1/tables/{id}/rows`, different methods.
+
+| Command | API | Rows must include |
+|---------|-----|-------------------|
+| `tables upsert` | `PUT` | Business-key columns only (`event_id`, …) — **use for `kind=data` tables** |
+| `tables append` | `POST` | Primary key `s_id` (caller-assigned, append-only) |
+
+`--key-column` on create names the **business key** matched on upsert, not the physical
+primary key. Every data table already has an integer `s_id` primary key and an
+`s_created_at` timestamp, added for you — declaring either in `--column` is refused.
+A single create takes at most 50 columns.
 
 ### Existing project file → grid table
 
