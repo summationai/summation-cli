@@ -56,6 +56,37 @@ def _emit_import_wait_terminal(terminal: dict) -> None:
     exit_if_stream_failed(terminal)
 
 
+def _load_rows_from_flags(
+    *,
+    rows: str | None,
+    file: Path | None,
+) -> list:
+    if (rows is None) == (file is None):
+        emit_error(
+            err(
+                "INVALID_FLAGS",
+                "Provide exactly one of --rows or --file.",
+                'Pass --rows \'[{"col": "val"}]\' or --file rows.json.',
+            )
+        )
+    raw = file.read_text() if file is not None else rows
+    try:
+        parsed = json.loads(raw)  # type: ignore[arg-type]
+    except json.JSONDecodeError as exc:
+        emit_error(
+            err("INVALID_JSON", f"Rows are not valid JSON: {exc}.", "Pass a JSON array of objects.")
+        )
+    if not isinstance(parsed, list):
+        emit_error(
+            err(
+                "INVALID_ROWS",
+                "Rows must be a JSON array of objects.",
+                "Wrap your rows in [ ... ].",
+            )
+        )
+    return parsed
+
+
 def _emit_append_result(result: dict) -> None:
     status = str(result.get("status", "")).upper()
     if status == "FULL":
@@ -80,6 +111,32 @@ def _emit_append_result(result: dict) -> None:
             "Append did not complete successfully.",
             "Review the table schema and row values, then retry.",
             data={"status": status or None, "errors": errors},
+        )
+    )
+
+
+def _emit_upsert_result(result: dict) -> None:
+    errors = result.get("errors") or []
+    inserted = result.get("inserted") or 0
+    updated = result.get("updated") or 0
+    if not errors:
+        emit(ok({"result": result}))
+        return
+    if inserted or updated:
+        emit_error(
+            err(
+                "UPSERT_PARTIAL",
+                f"Partial upsert: {inserted} inserted, {updated} updated, {len(errors)} failed.",
+                "Review errors and retry only the failed rows.",
+                data={"inserted": inserted, "updated": updated, "errors": errors},
+            )
+        )
+    emit_error(
+        err(
+            "UPSERT_FAILED",
+            "Upsert did not complete successfully.",
+            "Review the table schema and row values, then retry.",
+            data={"inserted": inserted, "updated": updated, "errors": errors},
         )
     )
 
@@ -182,30 +239,8 @@ def append_rows(
     ] = None,
     profile: ProfileOption = None,
 ) -> None:
-    """Append rows to a table (append-only). Rows come from --rows or --file as a JSON array of objects."""
-    if (rows is None) == (file is None):
-        emit_error(
-            err(
-                "INVALID_FLAGS",
-                "Provide exactly one of --rows or --file.",
-                'Pass --rows \'[{"col": "val"}]\' or --file rows.json.',
-            )
-        )
-    raw = file.read_text() if file is not None else rows
-    try:
-        parsed = json.loads(raw)  # type: ignore[arg-type]
-    except json.JSONDecodeError as exc:
-        emit_error(
-            err("INVALID_JSON", f"Rows are not valid JSON: {exc}.", "Pass a JSON array of objects.")
-        )
-    if not isinstance(parsed, list):
-        emit_error(
-            err(
-                "INVALID_ROWS",
-                "Rows must be a JSON array of objects.",
-                "Wrap your rows in [ ... ].",
-            )
-        )
+    """Append rows to a table (append-only). Each row must include the table primary key (s_id)."""
+    parsed = _load_rows_from_flags(rows=rows, file=file)
     payload: dict = {"rows": parsed}
     with api_client(ctx, profile) as c:
         body = c.request("POST", f"/v1/tables/{table_id}/rows", json=payload)
@@ -214,6 +249,58 @@ def append_rows(
         emit(ok({"result": result}))
         return
     _emit_append_result(result)
+
+
+@app.command("upsert")
+def upsert_rows(
+    ctx: typer.Context,
+    table_id: Annotated[str, typer.Argument()],
+    rows: Annotated[
+        str | None,
+        typer.Option("--rows", help="Rows as an inline JSON array of objects."),
+    ] = None,
+    file: Annotated[
+        Path | None,
+        typer.Option("--file", help="Path to a JSON file holding an array of row objects."),
+    ] = None,
+    key_column: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--key-column",
+            help="Business-key column(s) for row identity; omit to use the table's declared keys.",
+        ),
+    ] = None,
+    profile: ProfileOption = None,
+) -> None:
+    """Upsert rows by business key (insert or update). Do not include s_id in rows."""
+    parsed = _load_rows_from_flags(rows=rows, file=file)
+    for index, row in enumerate(parsed):
+        if not isinstance(row, dict):
+            emit_error(
+                err(
+                    "INVALID_ROWS",
+                    f"Row {index} is not a JSON object.",
+                    'Pass an array of objects, e.g. [{"event_id": "..."}].',
+                )
+            )
+        if "s_id" in row or "sId" in row:
+            emit_error(
+                err(
+                    "INVALID_ROWS",
+                    f"Row {index} must not include s_id.",
+                    "Upsert derives s_id from business keys. Use tables append to supply s_id.",
+                )
+            )
+    payload: dict = {"rows": parsed}
+    if key_column:
+        payload["key_columns"] = key_column
+    with api_client(ctx, profile) as c:
+        body = c.request("PUT", f"/v1/tables/{table_id}/rows", json=payload)
+    result = unwrap_data(body or {}, "data") or body
+    if not isinstance(result, dict):
+        emit(ok({"result": result}))
+        return
+    _emit_upsert_result(result)
 
 
 @app.command("import-status")

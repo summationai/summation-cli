@@ -96,7 +96,6 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
     ("POST", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
     ("DELETE", "/v1/sum-apps/*"): "SumApp management not exposed in sumcli.",
-    ("PUT", "/v1/tables/*/rows"): "Row replace not exposed in sumcli.",
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
     # Sandbox-only (relative to prior prod snapshot) — not part of workflows coverage.
@@ -695,7 +694,8 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
     },
     "tables": {
         "import": "Import from local file (multi-step; --wait/--no-wait).",
-        "append": "Append rows to a data table from --rows or --file (append-only).",
+        "append": "Append rows from --rows or --file; each row must include s_id (append-only).",
+        "upsert": "Upsert rows by business key from --rows or --file (no s_id in rows).",
     },
     "filesystem": {
         "roots": "List drives/roots for the configured site (--provider sharepoint).",

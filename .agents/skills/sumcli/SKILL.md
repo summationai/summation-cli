@@ -119,7 +119,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `tenant` | org/tenant metadata |
 | `projects` | CRUD, `current` |
 | `catalog` | attach/detach/list project tables & views |
-| `tables` | grid tables, CSV `import`, data |
+| `tables` | grid tables, CSV `import`, `append`, `upsert`, `data` |
 | `views` | Summation views |
 | `queries` | read-only SQL (`queries run --sql` / `--file`); cap rows with SQL `LIMIT` or `--limit` (API default 100, max 10000/request; higher auto-paginates) |
 | `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |
@@ -158,11 +158,11 @@ Two-step (keep CSV in project files): `files upload` then `tables import --remot
 
 After import, **attach** before the table appears in `catalog list` / project queries. `tables delete` does not auto-detach — run `catalog detach` separately.
 
-### Agent-owned data table (append-only state)
+### Agent-owned data table (upsert by business key)
 
 Use this when the rows come from your own code — app state, an op-log, a suppression
 list — rather than from a file or an existing query. `--kind data` creates the table
-empty and it accepts appends right away.
+empty; load rows with `tables upsert` (business keys only — no `s_id`).
 
 ```bash
 sumcli grid create ops_log --kind data \
@@ -171,8 +171,13 @@ sumcli grid create ops_log --kind data \
   --column count:integer \
   --key-column event_id
 
-sumcli tables append tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
 ```
+
+Use `tables append` only when you supply `s_id` yourself (append-only insert via
+`POST /v1/tables/{id}/rows`). For `kind=data` tables with `--key-column`, prefer
+`tables upsert` (`PUT …/rows`): rows use business keys only, and re-sending the same
+entity updates in place.
 
 Rules the API enforces, checked locally first so a wrong schema costs no round trip:
 

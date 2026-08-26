@@ -69,7 +69,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always co
 | `filesystem`  | Connected filesystem roots such as SharePoint (`roots`, `list`, `upload`, `download`, `mkdir`, `delete`, `import-env`, `set-defaults`)               |
 | `catalog`     | Project catalog entries (`list`, `show`, `attach`, `detach`, `refresh`)                                                                              |
 | `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
-| `tables`      | Grid tables and CSV import (`tables import` is a multi-step HTTP workflow); also `append`, `data`, `import-status`, `catalog-show`, `catalog-update` |
+| `tables`      | Grid tables and CSV import (`tables import`); row loads via `append` or `upsert`; also `data`, `import-status`, `catalog-show`, `catalog-update` |
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
 | `grid`        | Grid `status`, `create` (`--kind calc`/`data`), `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
 | `queries`     | Read-only SQL execution (`queries run`)                                                                                                              |
@@ -159,7 +159,7 @@ sumcli tables import --remote --path /Customers.csv --table customers
 
 Step 2 also accepts `--file-id file-...` if you have the ID directly.
 
-### Empty appendable data table
+### Agent-owned data table (`grid create --kind data`)
 
 When your code owns the rows — app state, an operator log, a suppression list — create
 an empty **data** table from a column schema instead of deriving one from existing data:
@@ -178,8 +178,12 @@ Each `--column` is `name:type[:null|notnull]`, order kept. Types: `string`, `int
 `{"name", "type", "nullable"}` objects). The table accepts rows immediately:
 
 ```bash
-sumcli tables append tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
 ```
+
+**`tables append` vs `tables upsert`:** `upsert` (`PUT`) matches on business keys — the
+usual path after `grid create --kind data`. `append` (`POST`) is append-only and requires
+you to supply `s_id` in each row.
 
 `--key-column` names the business key used to match rows on upsert, not the physical
 primary key: every data table already has an integer `s_id` primary key and a created-at
