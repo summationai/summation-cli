@@ -602,6 +602,48 @@ def resume_schedule(
     emit(ok({"schedule": unwrap_data(body or {}, "data") or body}))
 
 
+def _extract_schedule_runs(data: object) -> list:
+    """Normalize schedule runs payload to a list.
+
+    Handles:
+    - {"runs": [...]}
+    - {"scheduleRuns": [{"executions": [...]}, ...]} (nests flattened executions)
+    - {"schedule_runs": [...]}
+    - {"executions": [...]}
+    - bare list [...]
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        if isinstance(data.get("runs"), list):
+            return data["runs"]
+        for key in ("scheduleRuns", "schedule_runs"):
+            raw_runs = data.get(key)
+            if isinstance(raw_runs, list):
+                flattened = []
+                for item in raw_runs:
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(item.get("executions"), list)
+                        and item["executions"]
+                    ):
+                        for exec_item in item["executions"]:
+                            if isinstance(exec_item, dict):
+                                merged = {
+                                    **{k: v for k, v in item.items() if k != "executions"},
+                                    **exec_item,
+                                }
+                                flattened.append(merged)
+                            else:
+                                flattened.append(exec_item)
+                    else:
+                        flattened.append(item)
+                return flattened
+        if isinstance(data.get("executions"), list):
+            return data["executions"]
+    return extract_list(data, "runs", "scheduleRuns", "schedule_runs", "executions")
+
+
 @app.command("runs")
 def list_schedule_runs(
     ctx: typer.Context,
@@ -612,7 +654,9 @@ def list_schedule_runs(
     with api_client(ctx, profile) as c:
         body = c.request("GET", f"/v1/schedules/{schedule_id}/runs")
     data = unwrap_data(body or {}, "data")
-    items = extract_list(data, "runs")
+    if data is None:
+        data = body
+    items = _extract_schedule_runs(data)
     listed = truncate_list(items, count=count)
     emit(
         ok(

@@ -8,8 +8,12 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
+from sum_cli.auth import (
+    DeviceLoginCompleteResult,
+    DeviceLoginLogoutResult,
+    DeviceLoginStartResult,
+)
 from sum_cli.cli.main import app
-from sum_cli.auth import DeviceLoginCompleteResult, DeviceLoginLogoutResult, DeviceLoginStartResult
 from sum_cli.config_store import write_all
 
 runner = CliRunner()
@@ -164,3 +168,32 @@ def test_auth_status_false(monkeypatch) -> None:
     assert result.exit_code == 1
     body = _load_last_json(result.stdout)
     assert body["error"]["code"] == "NOT_AUTHENTICATED"
+
+
+def test_auth_token_redacted_by_default(tmp_path: Path, monkeypatch) -> None:
+    cfg_file = _write_config(
+        tmp_path,
+        access_token="secret-access-token-12345",
+        token_expires_at="2000000000",
+    )
+    monkeypatch.setenv("SUMMATION_CONFIG_FILE", str(cfg_file))
+    result = runner.invoke(app, ["auth", "token"])
+    assert result.exit_code == 0
+    body = _load_last_json(result.stdout)
+    assert body["ok"] is True
+    assert body["result"]["access_token"] == "secr…2345"
+    assert body["result"]["token_length"] == len("secret-access-token-12345")
+
+
+def test_auth_token_reveal_flag(tmp_path: Path, monkeypatch) -> None:
+    cfg_file = _write_config(
+        tmp_path,
+        access_token="secret-access-token-12345",
+        token_expires_at="2000000000",
+    )
+    monkeypatch.setenv("SUMMATION_CONFIG_FILE", str(cfg_file))
+    result = runner.invoke(app, ["auth", "token", "--reveal"])
+    assert result.exit_code == 0
+    body = _load_last_json(result.stdout)
+    assert body["ok"] is True
+    assert body["result"]["access_token"] == "secret-access-token-12345"

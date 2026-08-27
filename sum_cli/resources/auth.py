@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import httpx
 import typer
 
@@ -229,16 +231,28 @@ def status(ctx: typer.Context, profile: ProfileOption = None) -> None:
 
 
 @app.command("token")
-def show_token(ctx: typer.Context, profile: ProfileOption = None) -> None:
+def show_token(
+    ctx: typer.Context,
+    reveal: Annotated[
+        bool,
+        typer.Option(
+            "--reveal",
+            "--raw",
+            help="Print the unredacted bearer access token.",
+        ),
+    ] = False,
+    profile: ProfileOption = None,
+) -> None:
     cfg = get_config(ctx, profile)
     with Client(cfg, intent=checked_intent(ctx)) as c:
         token = c.token()
+    token_display = token if reveal else redact(token)
     emit(
         ok(
             {
                 "profile": cfg.profile,
                 "auth_mode": _auth_mode(cfg),
-                "access_token": redact(token),
+                "access_token": token_display,
                 "token_length": len(token),
                 "token_expires_at": cfg.token_expires_at,
                 "session_persisted": bool(cfg.device_login_credential)

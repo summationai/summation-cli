@@ -99,8 +99,6 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
     # Sandbox-only (relative to prior prod snapshot) — not part of workflows coverage.
-    ("GET", "/v1/connections/data/types"): "Data connector type catalog not exposed in sumcli.",
-    ("GET", "/v1/connections/data/types/*"): "Data connector type detail not exposed in sumcli.",
     (
         "PATCH",
         "/v1/connections/data/*/datasets/*",

@@ -726,6 +726,37 @@ def test_runs_lists_and_truncates() -> None:
     assert [r["id"] for r in body["result"]["runs"]] == ["run_1"]
 
 
+def test_runs_extracts_nested_schedule_runs_executions() -> None:
+    result, client = _run(
+        ["schedules", "runs", "sch_1"],
+        {
+            "data": {
+                "scheduleRuns": [
+                    {
+                        "id": "sr_1",
+                        "status": "COMPLETED",
+                        "executions": [
+                            {"id": "exec_1", "state": "SUCCESS"},
+                            {"id": "exec_2", "state": "SUCCESS"},
+                        ],
+                    },
+                    {
+                        "id": "sr_2",
+                        "status": "RUNNING",
+                        "executions": [{"id": "exec_3", "state": "RUNNING"}],
+                    },
+                ]
+            }
+        },
+    )
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[0] == ("GET", "/v1/schedules/sch_1/runs")
+    body = json.loads(result.stdout)
+    assert body["result"]["schedule_id"] == "sch_1"
+    assert [r["id"] for r in body["result"]["runs"]] == ["exec_1", "exec_2", "exec_3"]
+    assert body["result"]["runs"][0]["status"] == "COMPLETED"
+
+
 def test_run_now_sends_reason() -> None:
     result, client = _run(
         ["schedules", "run", "sch_1", "--confirm", "--reason", "backfill"],

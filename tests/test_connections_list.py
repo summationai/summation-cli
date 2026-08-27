@@ -77,3 +77,42 @@ def test_list_reads_connectors_key_from_data_wrapper() -> None:
     assert result.exit_code == 0, result.stdout
     body = json.loads(result.stdout)
     assert body["result"]["connections"][0]["id"] == "c1"
+
+
+def test_connections_types_list() -> None:
+    client = MagicMock()
+    client.request.return_value = {
+        "data": {
+            "types": ["POSTGRES", "SNOWFLAKE", "BIGQUERY"],
+            "undocumented_types": ["DATABRICKS"],
+        }
+    }
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+    with patch("sum_cli.resources.connections.api_client", return_value=cm):
+        result = runner.invoke(app, ["connections", "types"])
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[0] == ("GET", "/v1/connections/data/types")
+    body = json.loads(result.stdout)
+    assert "types" in body["result"]
+    assert "SNOWFLAKE" in body["result"]["types"]["types"]
+
+
+def test_connections_types_show_normalizes_case() -> None:
+    client = MagicMock()
+    client.request.return_value = {
+        "data": {
+            "type": "SNOWFLAKE",
+            "fields": [{"key": "snowflake_account", "required": True}],
+        }
+    }
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+    with patch("sum_cli.resources.connections.api_client", return_value=cm):
+        result = runner.invoke(app, ["connections", "types", "snowflake"])
+    assert result.exit_code == 0, result.stdout
+    assert client.request.call_args[0] == ("GET", "/v1/connections/data/types/SNOWFLAKE")
+    body = json.loads(result.stdout)
+    assert body["result"]["type"]["type"] == "SNOWFLAKE"

@@ -97,7 +97,7 @@ sumcli config use myenv
 sumcli --profile myenv auth login --m2m
 ```
 
-Useful: `auth whoami`, `auth status`, `auth token` (redacted), `config active`, `config list`, `config set-project <id>`.
+Useful: `auth whoami`, `auth status`, `auth token` (redacted; use `--reveal` for raw bearer token), `config active`, `config list`, `config set-project <id>`.
 
 `config import-env <file>` is a one-time bridge: copy `SUM_API_*` from any env file (e.g. a skill or CI `.env`) into `~/.summation/summation-config`. sumcli does not read other config paths at runtime.
 
@@ -201,6 +201,9 @@ credentials pass a test, and datasets are attached. Creating alone gets you none
 the last two.
 
 ```bash
+# 0. DISCOVER — check accepted config and secret keys for the connector type
+sumcli connections types SNOWFLAKE
+
 # 1. CREATE — secrets go in a file, never on the command line
 cat > /tmp/conn.json <<'EOF'
 {
@@ -382,6 +385,7 @@ sumcli files list --project prj-... --count 100 | jq -r '.result.files[] | "\(.k
 6. **Demand a run report with counts.** Rows read, date range, per-segment counts, skipped items, output size, byte delta. Without numbers you cannot tell a correct run from a plausible-looking one.
 7. **Iterate through the same chat.** Use `chats reply --chat <id>` so the agent keeps the full constraint history. A fresh `chats create` loses that context and re-litigates decisions.
 8. **Remember the row cap.** `queries` caps at **10,000 rows per request** (`QueryExecutionRequest.limit` maximum); the agent's own SQL tool caps higher. Neither can be raised. If a source exceeds the cap, the playbook must paginate — say so up front rather than letting a run discover it.
+9. **JSONPath accessors in the query engine.** The query engine can return `NULL` for every row on invalid/unsupported JSONPath accessors without failing the query. Always verify non-null column counts when extracting from JSON structures.
 
 **Triggering.** There is no `sumcli playbooks run`. Options: run it in the web app, ask in chat (*"run the X playbook"*), create a schedule and call `sumcli schedules run`, or (when the tenant has workflows) create a workflow and call `sumcli workflows run` — see below.
 
