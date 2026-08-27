@@ -727,29 +727,30 @@ def test_runs_lists_and_truncates() -> None:
 
 
 def test_runs_extracts_nested_schedule_runs_executions() -> None:
+    """Flatten the shape sum-api actually sends.
+
+    ``_public_schedule_runs_payload`` builds each ``scheduleRuns[]`` item from exactly
+    two keys, ``schedule`` and ``executions``. There is no run-level id or status, so
+    the fixture must not invent one.
+    """
+    schedule = {"id": "schedule_abc", "name": "Weekly digest"}
     result, client = _run(
         ["schedules", "runs", "sch_1"],
         {
             "data": {
                 "scheduleRuns": [
                     {
-                        "id": "sr_1",
-                        "status": "COMPLETED",
+                        "schedule": schedule,
                         "executions": [
                             {"id": "exec_1", "status": "FAILED"},
                             {"id": "exec_2", "status": "SUCCESS"},
                         ],
                     },
                     {
-                        "id": "sr_2",
-                        "status": "RUNNING",
+                        "schedule": schedule,
                         "executions": [{"id": "exec_3", "status": "RUNNING"}],
                     },
-                    {
-                        "id": "sr_3",
-                        "status": "QUEUED",
-                        "executions": [],
-                    },
+                    {"schedule": schedule, "executions": []},
                 ]
             }
         },
@@ -759,18 +760,32 @@ def test_runs_extracts_nested_schedule_runs_executions() -> None:
     body = json.loads(result.stdout)
     assert body["result"]["schedule_id"] == "sch_1"
     runs = body["result"]["runs"]
-    assert [r["id"] for r in runs] == ["exec_1", "exec_2", "exec_3", "sr_3"]
-    # Verify execution status does not overwrite schedule_run_status
-    assert runs[0]["id"] == "exec_1"
+
+    # One row per execution, plus one marker row for the run with none yet.
+    assert len(runs) == 4
+    assert [r.get("id") for r in runs] == ["exec_1", "exec_2", "exec_3", None]
+    assert [r["has_execution"] for r in runs] == [True, True, True, False]
+
+    # id/status describe the execution; parent context comes from the schedule object.
     assert runs[0]["status"] == "FAILED"
-    assert runs[0]["schedule_run_id"] == "sr_1"
-    assert runs[0]["schedule_run_status"] == "COMPLETED"
-    # Verify empty executions pass-through cleans up executions key and sets schedule_run fields
-    assert runs[3]["id"] == "sr_3"
-    assert runs[3]["status"] == "QUEUED"
-    assert runs[3]["schedule_run_id"] == "sr_3"
-    assert runs[3]["schedule_run_status"] == "QUEUED"
+    assert runs[0]["schedule_id"] == "schedule_abc"
+
+    # The marker row carries parent context and no invented run-level fields.
+    assert runs[3]["schedule_id"] == "schedule_abc"
     assert "executions" not in runs[3]
+    assert "schedule_run_id" not in runs[3]
+    assert "schedule_run_status" not in runs[3]
+
+
+def test_runs_marker_row_has_no_null_fields() -> None:
+    """No row may carry a key bound to a value the server never sends."""
+    result, _ = _run(
+        ["schedules", "runs", "sch_1"],
+        {"data": {"scheduleRuns": [{"schedule": {"id": "schedule_abc"}, "executions": []}]}},
+    )
+    assert result.exit_code == 0, result.stdout
+    row = json.loads(result.stdout)["result"]["runs"][0]
+    assert [k for k, v in row.items() if v is None] == []
 
 
 def test_run_now_sends_reason() -> None:

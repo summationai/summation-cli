@@ -197,3 +197,17 @@ def test_auth_token_reveal_flag(tmp_path: Path, monkeypatch) -> None:
     body = _load_last_json(result.stdout)
     assert body["ok"] is True
     assert body["result"]["access_token"] == "secret-access-token-12345"
+
+
+def test_auth_token_raw_prints_bare_token(tmp_path: Path, monkeypatch) -> None:
+    """--raw must be usable as TOKEN=$(sumcli auth token --raw), so no JSON envelope."""
+    cfg_file = _write_config(
+        tmp_path,
+        access_token="secret-access-token-12345",
+        token_expires_at="2000000000",
+    )
+    monkeypatch.setenv("SUMMATION_CONFIG_FILE", str(cfg_file))
+    result = runner.invoke(app, ["auth", "token", "--raw"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "secret-access-token-12345"
+    assert "{" not in result.stdout

@@ -237,8 +237,16 @@ def show_token(
         bool,
         typer.Option(
             "--reveal",
+            help="Show the unredacted bearer token in the JSON envelope. Treat the output"
+            " as a secret: it is a live credential, and stdout is captured in CI logs.",
+        ),
+    ] = False,
+    raw: Annotated[
+        bool,
+        typer.Option(
             "--raw",
-            help="Print the unredacted bearer access token.",
+            help="Print the bare bearer token and nothing else, for command substitution"
+            " (TOKEN=$(sumcli auth token --raw)). Treat the output as a secret.",
         ),
     ] = False,
     profile: ProfileOption = None,
@@ -246,6 +254,10 @@ def show_token(
     cfg = get_config(ctx, profile)
     with Client(cfg, intent=checked_intent(ctx)) as c:
         token = c.token()
+    if raw:
+        # Bare token on stdout, no envelope, so $(...) captures a usable credential.
+        typer.echo(token)
+        return
     token_display = token if reveal else redact(token)
     emit(
         ok(
