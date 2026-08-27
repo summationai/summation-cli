@@ -88,9 +88,6 @@ sumcli auth whoami | jq .
 
 `auth login` prints a device code and a URL. Approve it in the browser, and the CLI stores the session in `~/.summation/summation-config`.
 
-Existing `~/.summation/config` users should rename that file to
-`~/.summation/summation-config`; the TOML format is unchanged.
-
 **Optional — named profile for a non-default host:**
 
 ```bash

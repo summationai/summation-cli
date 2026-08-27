@@ -633,7 +633,7 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "use": "Switch active profile; optional --project sets default_project.",
         "set-project": "Set default_project for the active (or --profile) profile.",
         "clear-project": "Clear default_project for the active (or --profile) profile.",
-        "import-env": "Import SUM_API_* from a skill-style env file into a profile.",
+        "import-env": "Import SUM_API_* from an env file into a profile in summation-config.",
         "set-profile": "Create or replace a profile.",
         "copy-profile": "Clone a profile under a new name.",
         "delete-profile": "Remove a profile (--confirm).",
@@ -691,9 +691,13 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
             "Create a grid table: --kind calc (default) from --query, "
             "or --kind data as an empty appendable table from --column/--columns-file."
         ),
+        "materialize": "Materialize a CALCULATION table (run its SELECT; --dry-run optional).",
     },
     "tables": {
-        "import": "Import from local file (multi-step; --wait/--no-wait).",
+        "import": (
+            "Import from local or project file (--wait/--no-wait; "
+            "--import-type, --confirm, --column-mappings-file)."
+        ),
         "append": "Append rows from --rows or --file; each row must include s_id (append-only).",
         "upsert": "Upsert rows by business key from --rows or --file (no s_id in rows).",
     },

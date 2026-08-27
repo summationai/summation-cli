@@ -19,7 +19,7 @@ from sum_cli.commands import (
     require_project,
     unwrap_data,
 )
-from sum_cli.output import emit, emit_error, err, ndjson, ok, truncate_list
+from sum_cli.output import emit, emit_error, err, invalid_request, ndjson, ok, truncate_list
 from sum_cli.streaming import exit_if_stream_failed
 from sum_cli.tempfiles import write_temp_bytes
 
@@ -27,6 +27,128 @@ app = typer.Typer(no_args_is_help=True)
 
 _IMPORT_TERMINAL_STATES = frozenset({"COMPLETED", "FAILED", "SUCCEEDED", "SUCCESS", "ERROR"})
 _IMPORT_FAILED_STATES = frozenset({"FAILED", "ERROR"})
+_IMPORT_TYPES = frozenset({"NEW", "FULL_REFRESH", "INCREMENTAL_REFRESH"})
+_REFRESH_IMPORT_TYPES = frozenset({"FULL_REFRESH", "INCREMENTAL_REFRESH"})
+
+
+def _resolve_import_options(
+    *,
+    refresh: bool,
+    import_type: str | None,
+    confirm: bool,
+) -> tuple[str, bool]:
+    normalized_import_type = import_type.upper() if import_type else None
+    if refresh and normalized_import_type and normalized_import_type != "FULL_REFRESH":
+        invalid_request(
+            "--refresh implies --import-type FULL_REFRESH.",
+            "Drop --import-type or use --import-type FULL_REFRESH without --refresh.",
+        )
+    resolved_type = "FULL_REFRESH" if refresh else (normalized_import_type or "NEW")
+    if resolved_type not in _IMPORT_TYPES:
+        invalid_request(
+            f"Unsupported --import-type {resolved_type!r}.",
+            f"Use one of: {', '.join(sorted(_IMPORT_TYPES))}.",
+        )
+    resolved_confirm = confirm or refresh
+    if resolved_type in _REFRESH_IMPORT_TYPES and not resolved_confirm:
+        # Only FULL_REFRESH may be reached via --refresh; naming that shorthand under
+        # INCREMENTAL_REFRESH would talk the caller into a different import type.
+        fix = "Pass --confirm."
+        if resolved_type == "FULL_REFRESH":
+            fix = "Pass --confirm or use --refresh (shorthand for FULL_REFRESH + confirm)."
+        invalid_request(
+            f"{resolved_type} replaces an existing table's rows and requires confirmation.",
+            fix,
+        )
+    return resolved_type, resolved_confirm
+
+
+_MAPPING_REQUIRED_KEYS = ("source_column_name", "target_column_name")
+_MAPPING_OPTIONAL_KEYS = ("data_type", "nullable", "required", "unique")
+_MAPPING_SHAPE_HINT = '{"source_column_name": "...", "target_column_name": "..."}'
+# Earlier help text advertised these, and sum-api answers them with a 422 naming neither.
+_MAPPING_LEGACY_KEYS = {"sourceColumn": "source_column_name", "targetColumn": "target_column_name"}
+
+
+def _validate_column_mappings(entries: list) -> list[dict]:
+    """Check entries against TableImportColumnMapping before sum-api sees them.
+
+    The mappings feed both /v1/assets/{id}/previews and /v1/table-imports, and unknown
+    keys are dropped server-side rather than rejected — so a camelCase file fails as a
+    422 about missing required fields, naming neither the key that was ignored nor its
+    correct spelling. Refusing it here lets the error say both.
+    """
+    allowed = set(_MAPPING_REQUIRED_KEYS) | set(_MAPPING_OPTIONAL_KEYS)
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            invalid_request(
+                f"--column-mappings-file entry {index} is not a JSON object.",
+                f"Use objects, e.g. {_MAPPING_SHAPE_HINT}.",
+            )
+        renamed = sorted(set(entry) & set(_MAPPING_LEGACY_KEYS))
+        if renamed:
+            spelled = ", ".join(f"{key} -> {_MAPPING_LEGACY_KEYS[key]}" for key in renamed)
+            invalid_request(
+                f"--column-mappings-file entry {index} uses camelCase keys: {', '.join(renamed)}.",
+                f"Rename them: {spelled}.",
+            )
+        unknown = sorted(set(entry) - allowed)
+        if unknown:
+            invalid_request(
+                f"--column-mappings-file entry {index} has unknown keys: {', '.join(unknown)}.",
+                f"Each mapping takes {', '.join(_MAPPING_REQUIRED_KEYS)}"
+                f" and optional {', '.join(_MAPPING_OPTIONAL_KEYS)}.",
+            )
+        for key in _MAPPING_REQUIRED_KEYS:
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                invalid_request(
+                    f"--column-mappings-file entry {index} needs a non-empty string {key}.",
+                    f"Use objects, e.g. {_MAPPING_SHAPE_HINT}.",
+                )
+    return entries
+
+
+def _load_column_mappings(path: Path | None) -> list:
+    if path is None:
+        return []
+    try:
+        parsed = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
+        invalid_request(
+            f"--column-mappings-file is not valid UTF-8 text: {exc}",
+            "Save --column-mappings-file as UTF-8 encoded JSON.",
+        )
+    except ValueError as exc:
+        invalid_request(
+            f"Invalid JSON in --column-mappings-file: {exc}",
+            "Provide a JSON array or an object with a column_mappings array.",
+        )
+    except OSError as exc:
+        invalid_request(
+            f"Cannot read --column-mappings-file: {exc}",
+            "Check that the --column-mappings-file path exists and is readable.",
+        )
+    if isinstance(parsed, list):
+        return _validate_column_mappings(parsed)
+    if isinstance(parsed, dict):
+        mappings = parsed.get("column_mappings")
+        if mappings is None:
+            invalid_request(
+                "--column-mappings-file must contain a column_mappings array.",
+                'Use {"column_mappings": [...]} or a top-level JSON array.',
+            )
+        if not isinstance(mappings, list):
+            invalid_request(
+                "--column-mappings-file column_mappings must be a JSON array.",
+                'Use {"column_mappings": [...]} or a top-level JSON array.',
+            )
+        return _validate_column_mappings(mappings)
+    invalid_request(
+        "--column-mappings-file must contain a JSON array or object.",
+        'Use {"column_mappings": [...]} or a top-level array of'
+        ' {"source_column_name": "...", "target_column_name": "..."} objects.',
+    )
 
 _ROWS_SHAPE_HINT = '[{"col": "val"}]'
 _MIN_ROWS_PER_REQUEST = 1
@@ -417,16 +539,43 @@ def import_table(
     wait: Annotated[
         bool, typer.Option("--wait/--no-wait", help="Poll import until complete.")
     ] = True,
+    import_type: Annotated[
+        str | None,
+        typer.Option(
+            "--import-type",
+            help="Import mode: NEW (default) or FULL_REFRESH (replaces existing table rows).",
+        ),
+    ] = None,
+    confirm: Annotated[
+        bool,
+        typer.Option(
+            "--confirm",
+            help="Confirm destructive import (required for FULL_REFRESH; --refresh implies this).",
+        ),
+    ] = False,
     refresh: Annotated[
         bool,
         typer.Option(
             "--refresh",
-            help="Re-import into an existing table, replacing its rows (sends confirm=true).",
+            help="Shorthand for --import-type FULL_REFRESH --confirm.",
         ),
     ] = False,
+    column_mappings_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--column-mappings-file",
+            help='JSON file with {"column_mappings": [...]} for preview/import.',
+        ),
+    ] = None,
     separator: Annotated[str, typer.Option("--separator")] = ",",
     profile: ProfileOption = None,
 ) -> None:
+    resolved_import_type, resolved_confirm = _resolve_import_options(
+        refresh=refresh,
+        import_type=import_type,
+        confirm=confirm,
+    )
+    column_mappings = _load_column_mappings(column_mappings_file)
     if file_id is not None:
         remote = True
     if local and remote:
@@ -528,7 +677,7 @@ def import_table(
             "POST",
             f"/v1/assets/{asset_id}/previews",
             json={
-                "column_mappings": [],
+                "column_mappings": column_mappings,
                 "csv": {
                     "char_encoding": "UTF_8",
                     "column_separator": separator,
@@ -541,18 +690,15 @@ def import_table(
             },
         )
         preview_data = unwrap_data(preview or {}, "data") or preview
-        # --refresh replaces the existing table's rows; the explicit flag is the
-        # user's confirmation, so the CLI sends the API's required confirm=true.
-        # Without it the import is NEW: the pipeline refuses a name collision.
         created = c.request(
             "POST",
             "/v1/table-imports",
-            params={"confirm": "true"} if refresh else None,
+            params={"confirm": "true"} if resolved_confirm else None,
             json={
                 "asset_id": asset_id,
                 "table_name": table_name,
-                "import_type": "FULL_REFRESH" if refresh else "NEW",
-                "column_mappings": [],
+                "import_type": resolved_import_type,
+                "column_mappings": column_mappings,
             },
         )
         created_data = unwrap_data(created or {}, "data") or created
