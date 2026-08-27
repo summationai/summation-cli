@@ -19,8 +19,9 @@ _API_MAX_PAGE = 10000
 _QUERY_FAILED_STATES = frozenset({"FAILED", "ERROR"})
 # _extract_query_rows only ever reads result.rows, so drop the duplicate
 # rowsWithColumnOrder representation, which dominates response size on wide reads.
-# Requires a sum-api carrying QueryExecutionRequest.row_format: the schema sets
-# additionalProperties=false, so older deployments reject this field with a 422.
+# QueryExecutionRequest sets additionalProperties=false, so a sum-api without
+# row_format rejects this with a 422 — deployments upgrade independently, so a
+# lagging host is a live concern, not just a rollout one.
 _ROW_FORMAT = "rows"
 
 

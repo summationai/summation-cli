@@ -70,6 +70,9 @@ class CallSite:
     # ``params=`` argument was non-literal (a variable or helper call) and we
     # cannot prove which keys are sent — required-param checks skip those.
     query_params: frozenset[str] | None = None
+    # Top-level JSON body keys the call site statically sends. ``None`` means the
+    # ``json=`` argument was non-literal or absent, so body-field checks skip it.
+    body_keys: frozenset[str] | None = None
 
     @property
     def normalized_path(self) -> str:
@@ -255,6 +258,23 @@ def _query_params_from_node(node: ast.AST | None) -> frozenset[str] | None:
     return None
 
 
+def _body_keys_from_node(node: ast.AST | None) -> frozenset[str] | None:
+    """Extract top-level keys from a literal ``json=`` dict.
+
+    Only constant string keys are reported. A partial set is sound for the check
+    this feeds: every key returned is definitely sent, so an unknown-field match is
+    never a false positive. Payloads assembled in a variable yield ``None``.
+    """
+    if not isinstance(node, ast.Dict):
+        return None
+    keys = {
+        key.value
+        for key in node.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    return frozenset(keys) or None
+
+
 class _CallSiteCollector(ast.NodeVisitor):
     """Collect sum-api call sites from a function body.
 
@@ -285,6 +305,7 @@ class _CallSiteCollector(ast.NodeVisitor):
         path: str,
         query_params: frozenset[str] | None = None,
         params_node: ast.AST | None = None,
+        body_node: ast.AST | None = None,
     ) -> None:
         resolved_params = query_params
         if params_node is not None:
@@ -295,14 +316,18 @@ class _CallSiteCollector(ast.NodeVisitor):
                 path=path,
                 source=self.source,
                 query_params=resolved_params,
+                body_keys=_body_keys_from_node(body_node),
             )
         )
 
-    def _params_kwarg(self, node: ast.Call) -> ast.AST | None:
+    def _kwarg(self, node: ast.Call, name: str) -> ast.AST | None:
         for kw in node.keywords:
-            if kw.arg == "params":
+            if kw.arg == name:
                 return kw.value
         return None
+
+    def _params_kwarg(self, node: ast.Call) -> ast.AST | None:
+        return self._kwarg(node, "params")
 
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute) and node.func.attr in self._CLIENT_METHODS:
@@ -314,6 +339,7 @@ class _CallSiteCollector(ast.NodeVisitor):
                         method=method,
                         path=path,
                         params_node=self._params_kwarg(node),
+                        body_node=self._kwarg(node, "json"),
                     )
         elif isinstance(node.func, ast.Name) and node.func.id == "post_with_wait_follow":
             if len(node.args) >= 3:
@@ -569,6 +595,74 @@ def cli_call_sites_missing_confirm(spec: dict) -> list[CallSite]:
         if site.query_params is None or "confirm" not in site.query_params:
             missing.append(site)
     return sorted(missing, key=lambda s: (s.normalized_path, s.source))
+
+
+def _resolve_ref(spec: dict, node: object) -> dict:
+    """Follow a single ``$ref`` into ``components``; returns ``{}`` when unresolvable."""
+    if not isinstance(node, dict):
+        return {}
+    ref = node.get("$ref")
+    if not isinstance(ref, str):
+        return node
+    if not ref.startswith("#/"):
+        return {}
+    target: object = spec
+    for part in ref[2:].split("/"):
+        if not isinstance(target, dict) or part not in target:
+            return {}
+        target = target[part]
+    return target if isinstance(target, dict) else {}
+
+
+def _request_body_schema(spec: dict, method: str, path: str) -> dict:
+    """Request-body schema for an operation, matched on the normalized path.
+
+    CLI f-strings and spec templates name parameters differently
+    (``/v1/projects/{pid}`` vs ``/v1/projects/{project_id}``), so a literal lookup
+    silently misses every parameterized route.
+    """
+    wanted = (method.upper(), normalize_path(path))
+    op: dict = {}
+    for spec_path, item in spec.get("paths", {}).items():
+        if not isinstance(item, dict) or normalize_path(spec_path) != wanted[1]:
+            continue
+        candidate = item.get(method.lower())
+        if isinstance(candidate, dict):
+            op = candidate
+            break
+    if not op:
+        return {}
+    content = _resolve_ref(spec, op.get("requestBody")).get("content")
+    if not isinstance(content, dict):
+        return {}
+    media = content.get("application/json")
+    if not isinstance(media, dict):
+        return {}
+    return _resolve_ref(spec, media.get("schema"))
+
+
+def call_sites_sending_unknown_body_fields(spec: dict) -> list[tuple[CallSite, frozenset[str]]]:
+    """Call sites posting literal JSON keys a closed request schema does not declare.
+
+    Only schemas with ``additionalProperties: false`` are checked: those reject
+    unknown fields outright, so a key the CLI sends but the contract omits is a 422
+    waiting to happen rather than a harmless extra. Nothing else in the suite reads
+    request bodies, so a mistyped or not-yet-deployed field is otherwise invisible.
+    """
+    offenders: list[tuple[CallSite, frozenset[str]]] = []
+    for site in cli_call_sites():
+        if not site.body_keys:
+            continue
+        schema = _request_body_schema(spec, site.method, site.path)
+        if schema.get("additionalProperties") is not False:
+            continue
+        declared = schema.get("properties")
+        if not isinstance(declared, dict):
+            continue
+        unknown = site.body_keys - set(declared)
+        if unknown:
+            offenders.append((site, frozenset(unknown)))
+    return sorted(offenders, key=lambda pair: (pair[0].normalized_path, pair[0].method))
 
 
 def _humanize_operation_id(operation_id: str | None) -> str | None:
