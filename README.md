@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summ
 
 ## Plugin compatibility
 
-The Summation plugin requires **sumcli ≥ 0.1.4**. Newer CLI releases are always compatible — `sumcli update` (PyPI latest) is the upgrade path. A plugin release that needs a higher floor will bump its own `minVersion`; this CLI does not pin an upper bound.
+The Summation plugin requires **sumcli ≥ 0.1.5**. Newer CLI releases are always compatible — `sumcli update` (PyPI latest) is the upgrade path. A plugin release that needs a higher floor will bump its own `minVersion`; this CLI does not pin an upper bound.
 
 `sumcli --version` prints a JSON envelope with `result.version` when stdout is not a TTY (or when `SUMCLI_OUTPUT=json`). That is the version string plugins should parse.
 
@@ -83,8 +83,26 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer CLI releases are alway
 | `views` | Summation views |
 | `grid` | Grid status, sync, lineage, and table creation (`create --kind calc` or `data`) |
 | `queries` | Read-only SQL execution (`queries run`) |
+| `verification-tests` | Validate, upload, attach, preview, and detach custom verification tests |
 
 Run `sumcli | jq '.result.resources'` for the live command tree with action blurbs, or `sumcli <resource> --help` for flags.
+
+### Custom verification tests
+
+Validate bundles entirely offline, then use the active profile and normal bearer authentication for the managed lifecycle:
+
+```bash
+sumcli verification-tests validate --bundle ./tests.yaml
+sumcli verification-tests upload --bundle ./tests.yaml
+sumcli verification-tests list --subject-type deck
+sumcli verification-tests attach --scope project --subject-type deck \
+  --op add --custom-test-id vtd-...
+sumcli verification-tests list-attachments --scope project --subject-type deck
+sumcli verification-tests preview --scope project --subject-type deck
+sumcli verification-tests detach vta-... --scope project --confirm
+```
+
+Project scope uses the profile's default project when `--project` is omitted. Cross-org calls use `--target-org ORG` and require an explicit project for project scope; identity always comes from the bearer token. Add `--dry-run` to `upload`, `attach`, or `detach` to validate and print the exact request without authentication or network access. A removal overlay (`attach --op remove --target-ref ...`) suppresses a test in resolution; `detach ... --confirm` soft-removes the attachment record itself.
 
 ### Developers
 
@@ -476,7 +494,7 @@ Command-tree action blurbs for API-backed commands are derived from the snapshot
 # Typer group help= or command docstrings in resource modules.
 - OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`).
 - No imports from sum-api service code or gRPC clients.
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

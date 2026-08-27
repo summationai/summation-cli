@@ -118,12 +118,14 @@ def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Clien
 def require_project(
     ctx: typer.Context,
     project: str | None = None,
+    *,
+    profile: str | None = None,
 ) -> str:
     # Check intent before resolving the project so the warning does not depend on
     # whether a command resolves its project first. Warns once, so the later
     # api_client call is a no-op.
     checked_intent(ctx)
-    resolved = resolve_project(get_config(ctx), explicit=project)
+    resolved = resolve_project(get_config(ctx, profile), explicit=project)
     if not resolved:
         emit_error(
             err(

@@ -1,6 +1,6 @@
 ---
 name: sumcli
-description: Use the sumcli CLI to authenticate, manage profiles/projects, and operate Summation via sum-api (/v1) — projects, catalog, tables, views, queries, chats, reports, files, connections, and grid. Use when running sumcli, scripting Summation automation, or when the user mentions summation-cli, sumcli, or prefers the CLI over raw API/helper scripts.
+description: Use the sumcli CLI to authenticate, manage profiles/projects, and operate Summation via sum-api (/v1) — projects, catalog, tables, views, queries, chats, reports, files, connections, grid, and custom verification tests. Use when running sumcli, scripting Summation automation, or when the user mentions summation-cli, sumcli, or prefers the CLI over raw API/helper scripts.
 ---
 
 # sumcli
@@ -38,7 +38,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summ
 
 ## Plugin ↔ CLI version contract
 
-The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always compatible (`sumcli update`). Plugins parse `sumcli --version` (`SUMCLI_OUTPUT=json`; read `result.version`). If the binary is missing or below that floor, install with the matching bootstrap above, then `sumcli update`.
+The Summation plugin requires **sumcli ≥ 0.1.5**. Taking PyPI latest is always compatible (`sumcli update`). Plugins parse `sumcli --version` (`SUMCLI_OUTPUT=json`; read `result.version`). If the binary is missing or below that floor, install with the matching bootstrap above, then `sumcli update`.
 
 ## Agent rules
 
@@ -54,7 +54,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always
    - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
 3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
 6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
 7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
@@ -133,8 +133,22 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
 | `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
 | `grid` | status, sync, lineage, push, `create` (calc from query or empty data table from columns), `materialize` |
+| `verification-tests` | validate/upload custom test bundles; manage attachment overlays and preview effective tests |
 
 ## Common workflows
+
+### Custom verification tests
+
+```bash
+sumcli verification-tests validate --bundle ./tests.yaml       # offline
+sumcli verification-tests upload --bundle ./tests.yaml
+sumcli verification-tests attach --scope project --subject-type deck \
+  --op add --custom-test-id vtd-...
+sumcli verification-tests preview --scope project --subject-type deck
+sumcli verification-tests detach vta-... --scope project --confirm
+```
+
+Project scope uses the profile default unless `--project` is supplied. Cross-org calls use `--target-org` and must specify a project explicitly for project scope. `upload`, `attach`, and `detach` support network-free `--dry-run`; detach dry-run does not require `--confirm`. `attach --op remove --target-ref ...` creates a removal overlay, while `detach` removes an attachment record.
 
 ### CSV → queryable table
 
