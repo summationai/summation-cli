@@ -17,6 +17,11 @@ app = typer.Typer(no_args_is_help=True)
 _API_DEFAULT_LIMIT = 100
 _API_MAX_PAGE = 10000
 _QUERY_FAILED_STATES = frozenset({"FAILED", "ERROR"})
+# _extract_query_rows only ever reads result.rows, so drop the duplicate
+# rowsWithColumnOrder representation, which dominates response size on wide reads.
+# Requires a sum-api carrying QueryExecutionRequest.row_format: the schema sets
+# additionalProperties=false, so older deployments reject this field with a 422.
+_ROW_FORMAT = "rows"
 
 
 def _strip_sql(sql: str) -> str:
@@ -112,7 +117,7 @@ def _execute_query(client: Any, sql: str, page_limit: int) -> dict[str, Any]:
     body = client.request(
         "POST",
         "/v1/query-executions",
-        json={"sql": sql, "limit": page_limit},
+        json={"sql": sql, "limit": page_limit, "row_format": _ROW_FORMAT},
     )
     data = unwrap_data(body or {}, "data") or body
     if isinstance(data, dict):

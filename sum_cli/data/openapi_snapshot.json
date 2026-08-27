@@ -2438,7 +2438,7 @@
             "type": "string"
           },
           "executionFormat": {
-            "description": "typed_graph for workflows built from a graph document, legacy_playbook for the older step-shaped workflows. Fixed when the workflow is created.",
+            "description": "typed_graph for workflows built from a graph document. Fixed when the workflow is created.",
             "title": "Executionformat",
             "type": "string"
           },
@@ -2833,7 +2833,7 @@
             "type": "object"
           },
           "status": {
-            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, unknown.",
+            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, completed_with_errors, unknown.",
             "title": "Status",
             "type": "string"
           },
@@ -16517,7 +16517,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -16874,7 +16874,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17014,7 +17014,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17304,7 +17304,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {

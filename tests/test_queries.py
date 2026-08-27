@@ -31,7 +31,8 @@ def _row(n: int) -> dict:
 
 
 def _page_body(rows: list[dict], *, status: str = "succeeded") -> dict:
-    return {"status": status, "result": {"rows": rows, "rowsWithColumnOrder": []}}
+    # row_format="rows" means the response omits rowsWithColumnOrder entirely.
+    return {"status": status, "result": {"rows": rows}}
 
 
 def test_extract_query_rows_nested() -> None:
@@ -55,6 +56,14 @@ def test_execute_query_normalizes_list_payload() -> None:
     data = _execute_query(client, "select 1", 10)
     assert data == {"rows": [_row(1), _row(2)]}
     assert _extract_query_rows(data) == [_row(1), _row(2)]
+
+
+def test_execute_query_requests_rows_only() -> None:
+    """Opt out of rowsWithColumnOrder; the CLI never reads it."""
+    client = MagicMock()
+    client.request.return_value = _page_body([_row(1)])
+    _execute_query(client, "select 1", 10)
+    assert client.request.call_args.kwargs["json"]["row_format"] == "rows"
 
 
 def test_page_sql_offset() -> None:
