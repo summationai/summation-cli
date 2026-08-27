@@ -76,6 +76,29 @@ def list_connections(
     emit(ok({"connections": listed["items"], **{k: v for k, v in listed.items() if k != "items"}}))
 
 
+@app.command("types")
+def list_or_show_types(
+    ctx: typer.Context,
+    connector_type: Annotated[
+        str | None,
+        typer.Argument(
+            help="Connector type (e.g. SNOWFLAKE, POSTGRES). Omit to list all types.",
+        ),
+    ] = None,
+    profile: ProfileOption = None,
+) -> None:
+    """List supported connector types or show accepted config/secret keys for one type."""
+    with api_client(ctx, profile) as c:
+        if connector_type:
+            body = c.request(
+                "GET", f"/v1/connections/data/types/{connector_type.strip().upper()}"
+            )
+            emit(ok({"type": unwrap_data(body or {}, "data") or body}))
+        else:
+            body = c.request("GET", "/v1/connections/data/types")
+            emit(ok({"types": unwrap_data(body or {}, "data") or body}))
+
+
 @app.command("show")
 def show_connection(
     ctx: typer.Context,
@@ -103,7 +126,7 @@ def create_connection(
     description: Annotated[str | None, typer.Option("--description")] = None,
     profile: ProfileOption = None,
 ) -> None:
-    payload: dict = {"name": name, "type": type}
+    payload: dict = {"name": name, "type": type.strip().upper()}
     if description:
         payload["description"] = description
     if config_file:

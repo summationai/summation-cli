@@ -97,7 +97,7 @@ sumcli config use myenv
 sumcli --profile myenv auth login --m2m
 ```
 
-Useful: `auth whoami`, `auth status`, `auth token` (redacted), `config active`, `config list`, `config set-project <id>`.
+Useful: `auth whoami`, `auth status`, `auth token` (redacted by default; `--reveal` shows the token in the JSON envelope, `--raw` prints the bare token for `TOKEN=$(sumcli auth token --raw)`), `config active`, `config list`, `config set-project <id>`. Both flags emit a live credential — never let that output reach a CI log.
 
 `config import-env <file>` is a one-time bridge: copy `SUM_API_*` from any env file (e.g. a skill or CI `.env`) into `~/.summation/summation-config`. sumcli does not read other config paths at runtime.
 
@@ -201,6 +201,9 @@ credentials pass a test, and datasets are attached. Creating alone gets you none
 the last two.
 
 ```bash
+# 0. DISCOVER — check accepted config and secret keys for the connector type
+sumcli connections types SNOWFLAKE
+
 # 1. CREATE — secrets go in a file, never on the command line
 cat > /tmp/conn.json <<'EOF'
 {
@@ -382,6 +385,7 @@ sumcli files list --project prj-... --count 100 | jq -r '.result.files[] | "\(.k
 6. **Demand a run report with counts.** Rows read, date range, per-segment counts, skipped items, output size, byte delta. Without numbers you cannot tell a correct run from a plausible-looking one.
 7. **Iterate through the same chat.** Use `chats reply --chat <id>` so the agent keeps the full constraint history. A fresh `chats create` loses that context and re-litigates decisions.
 8. **Remember the row cap.** `queries` caps at **10,000 rows per request** (`QueryExecutionRequest.limit` maximum); the agent's own SQL tool caps higher. Neither can be raised. If a source exceeds the cap, the playbook must paginate — say so up front rather than letting a run discover it.
+9. **JSONPath accessors in the query engine.** The query engine can return `NULL` for every row on invalid/unsupported JSONPath accessors without failing the query. Always verify non-null column counts when extracting from JSON structures.
 
 **Triggering.** There is no `sumcli playbooks run`. Options: run it in the web app, ask in chat (*"run the X playbook"*), create a schedule and call `sumcli schedules run`, or (when the tenant has workflows) create a workflow and call `sumcli workflows run` — see below.
 
@@ -460,7 +464,19 @@ Schedule ids are `schedule_<uuid>`, not `sch-...`. After `create`, confirm `stat
 9. **Always set `--zone` for business hours.** The default is UTC, so an unzoned `09:00` is early evening in Sydney and the small hours in Los Angeles. Pass an IANA ID (`America/New_York`), which tracks daylight saving; a fixed offset does not.
 10. **`--param` values are strings.** The contract types them as strings, so `--param threshold=0.8` arrives as `"0.8"`. The playbook must do its own casting.
 11. **Repeat `--email` per recipient**, as `address[:type[:name]]` — e.g. `--email ops@acme.com`, `--email cfo@acme.com:cc:Dana`. Type defaults to `to`; max 50 recipients.
-12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong.
+12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong. The payload carries only two facts per run — the `schedule` object and its executions — so `sumcli` flattens it to **one row per execution**. On each row, `id` and `status` describe the *execution*; `schedule_id` is lifted from the parent `schedule` object. There is no run-level status to read, so judge a run by its executions:
+
+    ```bash
+    # Per-execution outcome
+    sumcli schedules runs schedule_... --count 5 \
+      | jq -r '.result.runs[]
+               | if .has_execution == false then "(no execution yet)" else "exec=\(.id) \(.status)" end'
+
+    # Did any execution fail?
+    sumcli schedules runs schedule_... | jq '[.result.runs[] | select(.status=="FAILED")] | length'
+    ```
+
+13. **A queued run appears as a marker row with `has_execution: false`.** A run that has not produced an execution yet has no execution fields to report, so it is emitted as a single row carrying the parent context and that flag. This is deliberate: dropping it would make a run you just triggered look like it never happened. Right after `schedules run --confirm`, expect exactly this row — poll again for the outcome rather than reading its absence as a failure. Test `.has_execution == false` rather than probing for a missing `id`.
 
 ### Chat feedback
 

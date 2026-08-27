@@ -602,6 +602,59 @@ def resume_schedule(
     emit(ok({"schedule": unwrap_data(body or {}, "data") or body}))
 
 
+def _extract_schedule_runs(data: object) -> list:
+    """Normalize schedule runs payload to a list.
+
+    Handles:
+    - {"runs": [...]}
+    - {"scheduleRuns": [{"schedule": {...}, "executions": [...]}, ...]}
+    - {"schedule_runs": [...]}
+    - {"executions": [...]}
+    - bare list [...]
+
+    sum-api builds each ``scheduleRuns[]`` item from exactly two keys, ``schedule``
+    and ``executions``; there is no run-level id or status to carry down. So the
+    flattening emits one row per execution, and a run whose ``executions`` is empty
+    becomes a single marker row carrying only the parent context. ``schedule_id`` is
+    lifted out of the nested ``schedule`` object because that is the only per-run
+    fact the payload actually contains.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        if isinstance(data.get("runs"), list):
+            return data["runs"]
+        for key in ("scheduleRuns", "schedule_runs"):
+            raw_runs = data.get(key)
+            if isinstance(raw_runs, list):
+                flattened = []
+                for item in raw_runs:
+                    if not isinstance(item, dict) or not isinstance(
+                        item.get("executions"), list
+                    ):
+                        flattened.append(item)
+                        continue
+                    parent = {k: v for k, v in item.items() if k != "executions"}
+                    schedule = parent.get("schedule")
+                    if isinstance(schedule, dict) and schedule.get("id") is not None:
+                        parent["schedule_id"] = schedule["id"]
+                    if not item["executions"]:
+                        # A run with no execution yet is real data: dropping it would make a
+                        # just-triggered run look like it never happened (SUM-5882). Emit it as
+                        # a marker row instead, flagged so consumers need not test key absence.
+                        flattened.append({**parent, "has_execution": False})
+                        continue
+                    for exec_item in item["executions"]:
+                        if isinstance(exec_item, dict):
+                            flattened.append({**parent, **exec_item, "has_execution": True})
+                        else:
+                            flattened.append(exec_item)
+                return flattened
+        if isinstance(data.get("executions"), list):
+            return data["executions"]
+    return extract_list(data, "runs", "scheduleRuns", "schedule_runs", "executions")
+
+
 @app.command("runs")
 def list_schedule_runs(
     ctx: typer.Context,
@@ -612,7 +665,9 @@ def list_schedule_runs(
     with api_client(ctx, profile) as c:
         body = c.request("GET", f"/v1/schedules/{schedule_id}/runs")
     data = unwrap_data(body or {}, "data")
-    items = extract_list(data, "runs")
+    if data is None:
+        data = body
+    items = _extract_schedule_runs(data)
     listed = truncate_list(items, count=count)
     emit(
         ok(
