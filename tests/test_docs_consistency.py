@@ -56,7 +56,7 @@ def _documented_commands(doc: str) -> set[str]:
         None,
     )
     assert line is not None, f"{doc} has no destructive-commands line"
-    return set(re.findall(r"`([a-z]+(?: [a-z-]+)+)`", line))
+    return set(re.findall(r"`([a-z-]+(?: [a-z-]+)+)`", line))
 
 
 @pytest.mark.parametrize("doc", _DOCS)
