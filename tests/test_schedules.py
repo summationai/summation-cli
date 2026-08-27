@@ -736,14 +736,19 @@ def test_runs_extracts_nested_schedule_runs_executions() -> None:
                         "id": "sr_1",
                         "status": "COMPLETED",
                         "executions": [
-                            {"id": "exec_1", "state": "SUCCESS"},
-                            {"id": "exec_2", "state": "SUCCESS"},
+                            {"id": "exec_1", "status": "FAILED"},
+                            {"id": "exec_2", "status": "SUCCESS"},
                         ],
                     },
                     {
                         "id": "sr_2",
                         "status": "RUNNING",
-                        "executions": [{"id": "exec_3", "state": "RUNNING"}],
+                        "executions": [{"id": "exec_3", "status": "RUNNING"}],
+                    },
+                    {
+                        "id": "sr_3",
+                        "status": "QUEUED",
+                        "executions": [],
                     },
                 ]
             }
@@ -753,8 +758,19 @@ def test_runs_extracts_nested_schedule_runs_executions() -> None:
     assert client.request.call_args[0] == ("GET", "/v1/schedules/sch_1/runs")
     body = json.loads(result.stdout)
     assert body["result"]["schedule_id"] == "sch_1"
-    assert [r["id"] for r in body["result"]["runs"]] == ["exec_1", "exec_2", "exec_3"]
-    assert body["result"]["runs"][0]["status"] == "COMPLETED"
+    runs = body["result"]["runs"]
+    assert [r["id"] for r in runs] == ["exec_1", "exec_2", "exec_3", "sr_3"]
+    # Verify execution status does not overwrite schedule_run_status
+    assert runs[0]["id"] == "exec_1"
+    assert runs[0]["status"] == "FAILED"
+    assert runs[0]["schedule_run_id"] == "sr_1"
+    assert runs[0]["schedule_run_status"] == "COMPLETED"
+    # Verify empty executions pass-through cleans up executions key and sets schedule_run fields
+    assert runs[3]["id"] == "sr_3"
+    assert runs[3]["status"] == "QUEUED"
+    assert runs[3]["schedule_run_id"] == "sr_3"
+    assert runs[3]["schedule_run_status"] == "QUEUED"
+    assert "executions" not in runs[3]
 
 
 def test_run_now_sends_reason() -> None:

@@ -82,7 +82,7 @@ def list_or_show_types(
     connector_type: Annotated[
         str | None,
         typer.Argument(
-            help="Optional connector type (e.g. SNOWFLAKE, POSTGRES). When omitted, lists all types.",
+            help="Connector type (e.g. SNOWFLAKE, POSTGRES). Omit to list all types.",
         ),
     ] = None,
     profile: ProfileOption = None,

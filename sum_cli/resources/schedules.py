@@ -627,16 +627,33 @@ def _extract_schedule_runs(data: object) -> list:
                         and isinstance(item.get("executions"), list)
                         and item["executions"]
                     ):
+                        parent = {k: v for k, v in item.items() if k != "executions"}
                         for exec_item in item["executions"]:
                             if isinstance(exec_item, dict):
                                 merged = {
-                                    **{k: v for k, v in item.items() if k != "executions"},
+                                    **parent,
                                     **exec_item,
+                                    "schedule_run_id": item.get("id"),
+                                    "schedule_run_status": item.get("status"),
                                 }
                                 flattened.append(merged)
                             else:
                                 flattened.append(exec_item)
                     else:
+                        # Deliberate pass-through for queued runs without executions yet (SUM-5882);
+                        # clean up any empty executions: [] key.
+                        if isinstance(item, dict) and item.get("executions") == []:
+                            item = {
+                                **{k: v for k, v in item.items() if k != "executions"},
+                                "schedule_run_id": item.get("id"),
+                                "schedule_run_status": item.get("status"),
+                            }
+                        elif isinstance(item, dict) and "id" in item:
+                            item = {
+                                **item,
+                                "schedule_run_id": item.get("id"),
+                                "schedule_run_status": item.get("status"),
+                            }
                         flattened.append(item)
                 return flattened
         if isinstance(data.get("executions"), list):
