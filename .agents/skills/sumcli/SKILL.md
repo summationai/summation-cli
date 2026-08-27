@@ -470,13 +470,13 @@ Schedule ids are `schedule_<uuid>`, not `sch-...`. After `create`, confirm `stat
     # Per-execution outcome
     sumcli schedules runs schedule_... --count 5 \
       | jq -r '.result.runs[]
-               | if .has_execution then "exec=\(.id) \(.status)" else "(no execution yet)" end'
+               | if .has_execution == false then "(no execution yet)" else "exec=\(.id) \(.status)" end'
 
     # Did any execution fail?
     sumcli schedules runs schedule_... | jq '[.result.runs[] | select(.status=="FAILED")] | length'
     ```
 
-13. **A queued run appears as a marker row with `has_execution: false`.** A run that has not produced an execution yet has no execution fields to report, so it is emitted as a single row carrying the parent context and that flag. This is deliberate: dropping it would make a run you just triggered look like it never happened. Right after `schedules run --confirm`, expect exactly this row — poll again for the outcome rather than reading its absence as a failure. Test `has_execution` rather than probing for a missing `id`.
+13. **A queued run appears as a marker row with `has_execution: false`.** A run that has not produced an execution yet has no execution fields to report, so it is emitted as a single row carrying the parent context and that flag. This is deliberate: dropping it would make a run you just triggered look like it never happened. Right after `schedules run --confirm`, expect exactly this row — poll again for the outcome rather than reading its absence as a failure. Test `.has_execution == false` rather than probing for a missing `id`.
 
 ### Chat feedback
 
