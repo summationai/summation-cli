@@ -58,6 +58,19 @@ def _extract_query_rows(data: object) -> list[Any]:
     return []
 
 
+def _rows_key_absent(data: object) -> bool:
+    """True when the payload carries a result object that has no ``rows`` key.
+
+    ``_extract_query_rows`` can only read ``rows``, so a result shaped any other way
+    (``rowsWithColumnOrder`` alone, say) would otherwise read as zero rows and report
+    success -- an empty table and a representation mismatch must not look alike.
+    """
+    if not isinstance(data, dict):
+        return False
+    result = data.get("result")
+    return isinstance(result, dict) and "rows" not in result
+
+
 def _page_failed(data: object) -> bool:
     """Defense-in-depth: real API failures usually arrive as ApiError (non-200)."""
     if not isinstance(data, dict):
@@ -162,6 +175,21 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
                 page=len(pages) + 1,
                 offset=offset,
                 rows_so_far=len(rows),
+            )
+        if _rows_key_absent(data):
+            emit_error(
+                err(
+                    "QUERY_ROWS_MISSING",
+                    f"Query result on page {len(pages) + 1} carried no 'rows' key.",
+                    f"sumcli requests row_format={_ROW_FORMAT!r} and reads only "
+                    "result.rows. Check that sum-api honours that row_format.",
+                    # Keys only: the offending payload holds the whole result set.
+                    data={
+                        "page": len(pages) + 1,
+                        "offset": offset,
+                        "result_keys": sorted((data.get("result") or {}).keys()),
+                    },
+                )
             )
         pages.append(data)
         page_rows = _extract_query_rows(data)

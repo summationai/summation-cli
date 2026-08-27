@@ -66,6 +66,27 @@ def test_execute_query_requests_rows_only() -> None:
     assert client.request.call_args.kwargs["json"]["row_format"] == "rows"
 
 
+def test_rows_key_absent_errors_rather_than_reporting_zero_rows() -> None:
+    """A representation mismatch must not be indistinguishable from an empty table."""
+    client = MagicMock()
+    client.request.return_value = {
+        "status": "succeeded",
+        "result": {"rowsWithColumnOrder": [{"columns": []}]},
+    }
+    with pytest.raises(SystemExit) as exc:
+        _run_paginated(client, "select * from t", desired=10)
+    assert exc.value.code == 1
+
+
+def test_empty_result_set_is_not_an_error() -> None:
+    """rows present but empty is a legitimate no-match, not a mismatch."""
+    client = MagicMock()
+    client.request.return_value = _page_body([])
+    result = _run_paginated(client, "select * from t", desired=10)
+    assert result["showing"] == 0
+    assert result["truncated"] is False
+
+
 def test_page_sql_offset() -> None:
     assert _page_sql("select 1;", 0, 50) == "select 1"
     wrapped = _page_sql("select * from t", 10000, 50)
