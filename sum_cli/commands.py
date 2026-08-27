@@ -174,7 +174,14 @@ def unwrap_data(body: object, *keys: str) -> object | None:
 
 
 def extract_list(data: object, *item_keys: str) -> list:
-    """Normalize API list payloads to a list."""
+    """Normalize API list payloads to a list.
+
+    A non-empty dict carrying none of ``item_keys`` is shape drift, not an empty
+    result, so it raises instead of returning ``[]``. Reporting "no results" for a
+    payload the CLI failed to read is the failure mode SUM-5882 was filed about: the
+    caller cannot tell a real zero from a response sumcli did not understand. An
+    empty dict stays an empty list — that is a genuine zero from several endpoints.
+    """
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -182,4 +189,16 @@ def extract_list(data: object, *item_keys: str) -> list:
             items = data.get(key)
             if isinstance(items, list):
                 return items
+        if data:
+            seen = ", ".join(sorted(map(str, data))) or "none"
+            expected = ", ".join(item_keys) or "none"
+            emit_error(
+                err(
+                    "UNEXPECTED_SHAPE",
+                    f"Response has no recognized list key. Expected one of: {expected}."
+                    f" Got keys: {seen}.",
+                    "The API response shape changed. Upgrade sumcli, or report this with"
+                    " sumcli --version output and the command you ran.",
+                )
+            )
     return []
