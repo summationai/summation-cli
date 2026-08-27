@@ -63,6 +63,52 @@ def _resolve_import_options(
     return resolved_type, resolved_confirm
 
 
+_MAPPING_REQUIRED_KEYS = ("source_column_name", "target_column_name")
+_MAPPING_OPTIONAL_KEYS = ("data_type", "nullable", "required", "unique")
+_MAPPING_SHAPE_HINT = '{"source_column_name": "...", "target_column_name": "..."}'
+# Earlier help text advertised these, and sum-api answers them with a 422 naming neither.
+_MAPPING_LEGACY_KEYS = {"sourceColumn": "source_column_name", "targetColumn": "target_column_name"}
+
+
+def _validate_column_mappings(entries: list) -> list[dict]:
+    """Check entries against TableImportColumnMapping before sum-api sees them.
+
+    The mappings feed both /v1/assets/{id}/previews and /v1/table-imports, and unknown
+    keys are dropped server-side rather than rejected — so a camelCase file fails as a
+    422 about missing required fields, naming neither the key that was ignored nor its
+    correct spelling. Refusing it here lets the error say both.
+    """
+    allowed = set(_MAPPING_REQUIRED_KEYS) | set(_MAPPING_OPTIONAL_KEYS)
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            invalid_request(
+                f"--column-mappings-file entry {index} is not a JSON object.",
+                f"Use objects, e.g. {_MAPPING_SHAPE_HINT}.",
+            )
+        renamed = sorted(set(entry) & set(_MAPPING_LEGACY_KEYS))
+        if renamed:
+            spelled = ", ".join(f"{key} -> {_MAPPING_LEGACY_KEYS[key]}" for key in renamed)
+            invalid_request(
+                f"--column-mappings-file entry {index} uses camelCase keys: {', '.join(renamed)}.",
+                f"Rename them: {spelled}.",
+            )
+        unknown = sorted(set(entry) - allowed)
+        if unknown:
+            invalid_request(
+                f"--column-mappings-file entry {index} has unknown keys: {', '.join(unknown)}.",
+                f"Each mapping takes {', '.join(_MAPPING_REQUIRED_KEYS)}"
+                f" and optional {', '.join(_MAPPING_OPTIONAL_KEYS)}.",
+            )
+        for key in _MAPPING_REQUIRED_KEYS:
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                invalid_request(
+                    f"--column-mappings-file entry {index} needs a non-empty string {key}.",
+                    f"Use objects, e.g. {_MAPPING_SHAPE_HINT}.",
+                )
+    return entries
+
+
 def _load_column_mappings(path: Path | None) -> list:
     if path is None:
         return []
@@ -84,7 +130,7 @@ def _load_column_mappings(path: Path | None) -> list:
             "Check that the --column-mappings-file path exists and is readable.",
         )
     if isinstance(parsed, list):
-        return parsed
+        return _validate_column_mappings(parsed)
     if isinstance(parsed, dict):
         mappings = parsed.get("column_mappings")
         if mappings is None:
@@ -97,10 +143,11 @@ def _load_column_mappings(path: Path | None) -> list:
                 "--column-mappings-file column_mappings must be a JSON array.",
                 'Use {"column_mappings": [...]} or a top-level JSON array.',
             )
-        return mappings
+        return _validate_column_mappings(mappings)
     invalid_request(
         "--column-mappings-file must contain a JSON array or object.",
-        'Use [{"sourceColumn": "...", "targetColumn": "..."}] or {"column_mappings": [...]}.',
+        'Use {"column_mappings": [...]} or a top-level array of'
+        ' {"source_column_name": "...", "target_column_name": "..."} objects.',
     )
 
 _ROWS_SHAPE_HINT = '[{"col": "val"}]'

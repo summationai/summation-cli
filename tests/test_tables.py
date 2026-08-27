@@ -14,6 +14,8 @@ from typer.testing import CliRunner
 
 from sum_cli.cli.main import app, main
 from sum_cli.client import ApiError
+from sum_cli.openapi_doc import load_spec
+from sum_cli.resources import tables
 
 runner = CliRunner()
 
@@ -632,7 +634,7 @@ def test_tables_import_accepts_top_level_column_mappings_array(
     csv = tmp_path / "data.csv"
     csv.write_text("col1\n1\n")
     mappings = tmp_path / "mappings.json"
-    mappings.write_text('[{"sourceColumn": "col1", "targetColumn": "col1"}]')
+    mappings.write_text('[{"source_column_name": "col1", "target_column_name": "col1"}]')
     mock_cm = _import_mocks(csv)
     monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
     monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
@@ -661,5 +663,123 @@ def test_tables_import_accepts_top_level_column_mappings_array(
         if c.args[0] == "POST" and "table-imports" in c.args[1]
     )
     assert post.kwargs["json"]["column_mappings"] == [
-        {"sourceColumn": "col1", "targetColumn": "col1"}
+        {"source_column_name": "col1", "target_column_name": "col1"}
     ]
+
+
+def test_tables_import_column_mapping_keys_match_spec(monkeypatch, tmp_path: Path) -> None:
+    """Mapping keys sent to sum-api must be the ones TableImportColumnMapping requires."""
+    spec = load_spec()
+    required = set(spec["components"]["schemas"]["TableImportColumnMapping"]["required"])
+
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mappings = tmp_path / "mappings.json"
+    mappings.write_text(json.dumps({"column_mappings": [dict.fromkeys(required, "col1")]}))
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--column-mappings-file",
+                str(mappings),
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    for mapping in post.kwargs["json"]["column_mappings"]:
+        assert required <= set(mapping), f"missing required keys: {required - set(mapping)}"
+
+
+def test_column_mapping_key_lists_match_spec() -> None:
+    """The local allowlist must track TableImportColumnMapping, not drift from it."""
+    schema = load_spec()["components"]["schemas"]["TableImportColumnMapping"]
+    assert set(tables._MAPPING_REQUIRED_KEYS) == set(schema["required"])
+    assert set(tables._MAPPING_REQUIRED_KEYS) | set(tables._MAPPING_OPTIONAL_KEYS) == set(
+        schema["properties"]
+    )
+
+
+def _invoke_with_mappings(monkeypatch, tmp_path: Path, payload: str):
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mappings = tmp_path / "mappings.json"
+    mappings.write_text(payload)
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        return runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--column-mappings-file",
+                str(mappings),
+            ],
+        )
+
+
+def test_tables_import_rejects_camelcase_mapping_keys(monkeypatch, tmp_path: Path) -> None:
+    """A camelCase file is refused locally, with the correct spelling named."""
+    result = _invoke_with_mappings(
+        monkeypatch, tmp_path, '[{"sourceColumn": "col1", "targetColumn": "col1"}]'
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_REQUEST"
+    assert "sourceColumn" in payload["error"]["message"]
+    assert "source_column_name" in payload["fix"]
+    assert "target_column_name" in payload["fix"]
+
+
+def test_tables_import_rejects_unknown_mapping_keys(monkeypatch, tmp_path: Path) -> None:
+    result = _invoke_with_mappings(
+        monkeypatch,
+        tmp_path,
+        '[{"source_column_name": "col1", "target_column_name": "col1", "bogus": 1}]',
+    )
+    assert result.exit_code != 0
+    assert "bogus" in json.loads(result.stdout)["error"]["message"]
+
+
+def test_tables_import_rejects_mapping_missing_required_key(monkeypatch, tmp_path: Path) -> None:
+    result = _invoke_with_mappings(monkeypatch, tmp_path, '[{"source_column_name": "col1"}]')
+    assert result.exit_code != 0
+    assert "target_column_name" in json.loads(result.stdout)["error"]["message"]
+
+
+def test_tables_import_accepts_optional_mapping_keys(monkeypatch, tmp_path: Path) -> None:
+    """Optional spec fields must survive validation and reach the request unchanged."""
+    entry = {
+        "source_column_name": "col1",
+        "target_column_name": "col1",
+        "data_type": "STRING",
+        "nullable": True,
+        "required": False,
+        "unique": False,
+    }
+    result = _invoke_with_mappings(monkeypatch, tmp_path, json.dumps([entry]))
+    assert result.exit_code == 0
