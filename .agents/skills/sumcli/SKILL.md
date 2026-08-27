@@ -464,7 +464,22 @@ Schedule ids are `schedule_<uuid>`, not `sch-...`. After `create`, confirm `stat
 9. **Always set `--zone` for business hours.** The default is UTC, so an unzoned `09:00` is early evening in Sydney and the small hours in Los Angeles. Pass an IANA ID (`America/New_York`), which tracks daylight saving; a fixed offset does not.
 10. **`--param` values are strings.** The contract types them as strings, so `--param threshold=0.8` arrives as `"0.8"`. The playbook must do its own casting.
 11. **Repeat `--email` per recipient**, as `address[:type[:name]]` — e.g. `--email ops@acme.com`, `--email cfo@acme.com:cc:Dana`. Type defaults to `to`; max 50 recipients.
-12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong.
+12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong. **Read `schedule_run_status`, not `status`, to judge the run.** `sumcli` flattens each schedule run's executions into one row per execution, so `id` and `status` describe the *execution*; the run that owns it is carried alongside as `schedule_run_id` and `schedule_run_status`. The two disagree routinely — a `COMPLETED` run can hold a `FAILED` execution — so the field you pick decides the answer:
+
+    ```bash
+    # Per-execution outcome, with the owning run kept alongside.
+    # A run with no execution yet has id == schedule_run_id; label it so the two do not blur.
+    sumcli schedules runs schedule_... --count 5 \
+      | jq -r '.result.runs[]
+               | "\(.schedule_run_id) \(.schedule_run_status) "
+                 + (if .id == .schedule_run_id then "(no execution yet)" else "exec=\(.id) \(.status)" end)'
+
+    # Did any execution fail?
+    sumcli schedules runs schedule_... | jq '[.result.runs[] | select(.status=="FAILED")] | length'
+    ```
+
+    Group by `schedule_run_id` to collapse back to per-run counts. Never correlate `id` against another endpoint as if it were a run id.
+13. **A queued run appears with no execution attached.** A run that has not produced an execution yet is emitted as a single row where `id` equals `schedule_run_id` and no execution fields are present. This is deliberate: dropping it would make a run you just triggered look like it never happened. Right after `schedules run --confirm`, expect exactly this row — poll again for the outcome rather than reading its absence, or its `QUEUED` status, as a failure.
 
 ### Chat feedback
 
