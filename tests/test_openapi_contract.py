@@ -5,6 +5,7 @@ from __future__ import annotations
 from sum_cli.openapi_doc import (
     UNCOVERED_OPERATIONS_ALLOWLIST,
     allowlisted_operations_now_covered,
+    call_sites_sending_unknown_body_fields,
     cli_call_sites_missing_confirm,
     cli_paths_missing_from_spec,
     load_spec,
@@ -18,6 +19,25 @@ def test_cli_call_sites_exist_in_openapi_snapshot() -> None:
     assert missing == [], (
         "CLI references routes missing from the vendored OpenAPI snapshot:\n"
         + "\n".join(f"  {site.method} {site.path} ({site.source})" for site in missing)
+    )
+
+
+def test_cli_body_fields_exist_in_closed_request_schemas() -> None:
+    """A closed schema rejects unknown fields, so an undeclared key is a 422.
+
+    Covers only inline ``json={...}`` literals -- currently 2 of the 6 closed-schema
+    operations the CLI reaches; bodies built up in a variable are not inspected.
+    """
+    spec = load_spec()
+    offenders = call_sites_sending_unknown_body_fields(spec)
+    assert offenders == [], (
+        "CLI call sites send JSON fields their request schema forbids "
+        "(additionalProperties: false). Refresh the snapshot if the API has since "
+        "gained the field:\n"
+        + "\n".join(
+            f"  {site.method} {site.path} ({site.source}): {', '.join(sorted(unknown))}"
+            for site, unknown in offenders
+        )
     )
 
 
