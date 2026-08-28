@@ -23,7 +23,11 @@ def test_cli_call_sites_exist_in_openapi_snapshot() -> None:
 
 
 def test_cli_body_fields_exist_in_closed_request_schemas() -> None:
-    """A closed schema rejects unknown fields, so an undeclared key is a 422."""
+    """A closed schema rejects unknown fields, so an undeclared key is a 422.
+
+    Covers only inline ``json={...}`` literals -- currently 2 of the 6 closed-schema
+    operations the CLI reaches; bodies built up in a variable are not inspected.
+    """
     spec = load_spec()
     offenders = call_sites_sending_unknown_body_fields(spec)
     assert offenders == [], (

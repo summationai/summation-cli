@@ -66,7 +66,7 @@ def test_execute_query_requests_rows_only() -> None:
     assert client.request.call_args.kwargs["json"]["row_format"] == "rows"
 
 
-def test_rows_key_absent_errors_rather_than_reporting_zero_rows() -> None:
+def test_no_readable_rows_errors_rather_than_reporting_zero_rows() -> None:
     """A representation mismatch must not be indistinguishable from an empty table."""
     client = MagicMock()
     client.request.return_value = {
@@ -76,6 +76,26 @@ def test_rows_key_absent_errors_rather_than_reporting_zero_rows() -> None:
     with pytest.raises(SystemExit) as exc:
         _run_paginated(client, "select * from t", desired=10)
     assert exc.value.code == 1
+
+
+def test_no_readable_rows_at_top_level_also_errors() -> None:
+    """A payload with no ``result`` object at all must not slip past the guard."""
+    client = MagicMock()
+    client.request.return_value = {
+        "status": "succeeded",
+        "rowsWithColumnOrder": [{"columns": []}],
+    }
+    with pytest.raises(SystemExit) as exc:
+        _run_paginated(client, "select * from t", desired=10)
+    assert exc.value.code == 1
+
+
+def test_top_level_rows_list_still_succeeds() -> None:
+    """_execute_query normalizes bare lists to this shape; it must stay readable."""
+    client = MagicMock()
+    client.request.return_value = [_row(1), _row(2)]
+    result = _run_paginated(client, "select * from t", desired=10)
+    assert result["showing"] == 2
 
 
 def test_empty_result_set_is_not_an_error() -> None:

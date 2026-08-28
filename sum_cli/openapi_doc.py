@@ -272,6 +272,8 @@ def _body_keys_from_node(node: ast.AST | None) -> frozenset[str] | None:
         for key in node.keys
         if isinstance(key, ast.Constant) and isinstance(key.value, str)
     }
+    # An empty literal (``json={}``) collapses to the same ``None`` as a variable
+    # payload; harmless, since a body sending nothing cannot send an undeclared field.
     return frozenset(keys) or None
 
 
@@ -346,12 +348,12 @@ class _CallSiteCollector(ast.NodeVisitor):
                 method = _method_from_node(node.args[1])
                 path = _path_template_from_node(node.args[2], self._env)
                 if method and path:
-                    self._append_site(method=method, path=path)
+                    self._append_site(method=method, path=path, body_node=self._kwarg(node, "json"))
         elif isinstance(node.func, ast.Attribute) and node.func.attr == "post":
             if len(node.args) >= 1:
                 path = _path_template_from_node(node.args[0], self._env)
                 if path:
-                    self._append_site(method="POST", path=path)
+                    self._append_site(method="POST", path=path, body_node=self._kwarg(node, "json"))
         self.generic_visit(node)
 
 

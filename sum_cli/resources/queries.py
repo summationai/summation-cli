@@ -59,17 +59,20 @@ def _extract_query_rows(data: object) -> list[Any]:
     return []
 
 
-def _rows_key_absent(data: object) -> bool:
-    """True when the payload carries a result object that has no ``rows`` key.
+def _no_readable_rows(data: object) -> bool:
+    """True when nothing ``_extract_query_rows`` can read is present.
 
-    ``_extract_query_rows`` can only read ``rows``, so a result shaped any other way
-    (``rowsWithColumnOrder`` alone, say) would otherwise read as zero rows and report
-    success -- an empty table and a representation mismatch must not look alike.
+    Stated as the negation of that function's own lookups so the two cannot drift.
+    A payload shaped any other way (``rowsWithColumnOrder`` alone, say) would
+    otherwise read as zero rows and report success -- an empty table and a
+    representation mismatch must not look alike.
     """
     if not isinstance(data, dict):
         return False
     result = data.get("result")
-    return isinstance(result, dict) and "rows" not in result
+    if isinstance(result, dict) and isinstance(result.get("rows"), list):
+        return False
+    return not any(isinstance(data.get(key), list) for key in ("rows", "results"))
 
 
 def _page_failed(data: object) -> bool:
@@ -151,9 +154,7 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
 
     while len(rows) < desired:
         page_limit = min(_API_MAX_PAGE, desired - len(rows))
-        page_sql = (
-            _page_sql(query_sql, offset, page_limit) if offset > 0 else _strip_sql(query_sql)
-        )
+        page_sql = _page_sql(query_sql, offset, page_limit) if offset > 0 else _strip_sql(query_sql)
         try:
             data = _execute_query(client, page_sql, page_limit)
         except ApiError as exc:
@@ -177,18 +178,20 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
                 offset=offset,
                 rows_so_far=len(rows),
             )
-        if _rows_key_absent(data):
+        if _no_readable_rows(data):
+            result = data.get("result")
             emit_error(
                 err(
                     "QUERY_ROWS_MISSING",
-                    f"Query result on page {len(pages) + 1} carried no 'rows' key.",
+                    f"Query result on page {len(pages) + 1} carried no 'rows' list.",
                     f"sumcli requests row_format={_ROW_FORMAT!r} and reads only "
                     "result.rows. Check that sum-api honours that row_format.",
                     # Keys only: the offending payload holds the whole result set.
                     data={
                         "page": len(pages) + 1,
                         "offset": offset,
-                        "result_keys": sorted((data.get("result") or {}).keys()),
+                        "payload_keys": sorted(data.keys()),
+                        "result_keys": sorted(result.keys()) if isinstance(result, dict) else [],
                     },
                 )
             )
