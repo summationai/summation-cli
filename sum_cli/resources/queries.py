@@ -17,6 +17,12 @@ app = typer.Typer(no_args_is_help=True)
 _API_DEFAULT_LIMIT = 100
 _API_MAX_PAGE = 10000
 _QUERY_FAILED_STATES = frozenset({"FAILED", "ERROR"})
+# _extract_query_rows only ever reads result.rows, so drop the duplicate
+# rowsWithColumnOrder representation, which dominates response size on wide reads.
+# QueryExecutionRequest sets additionalProperties=false, so a sum-api without
+# row_format rejects this with a 422 — deployments upgrade independently, so a
+# lagging host is a live concern, not just a rollout one.
+_ROW_FORMAT = "rows"
 
 
 def _strip_sql(sql: str) -> str:
@@ -51,6 +57,22 @@ def _extract_query_rows(data: object) -> list[Any]:
         if isinstance(rows, list):
             return rows
     return []
+
+
+def _no_readable_rows(data: object) -> bool:
+    """True when nothing ``_extract_query_rows`` can read is present.
+
+    Stated as the negation of that function's own lookups so the two cannot drift.
+    A payload shaped any other way (``rowsWithColumnOrder`` alone, say) would
+    otherwise read as zero rows and report success -- an empty table and a
+    representation mismatch must not look alike.
+    """
+    if not isinstance(data, dict):
+        return False
+    result = data.get("result")
+    if isinstance(result, dict) and isinstance(result.get("rows"), list):
+        return False
+    return not any(isinstance(data.get(key), list) for key in ("rows", "results"))
 
 
 def _page_failed(data: object) -> bool:
@@ -112,7 +134,7 @@ def _execute_query(client: Any, sql: str, page_limit: int) -> dict[str, Any]:
     body = client.request(
         "POST",
         "/v1/query-executions",
-        json={"sql": sql, "limit": page_limit},
+        json={"sql": sql, "limit": page_limit, "row_format": _ROW_FORMAT},
     )
     data = unwrap_data(body or {}, "data") or body
     if isinstance(data, dict):
@@ -132,9 +154,7 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
 
     while len(rows) < desired:
         page_limit = min(_API_MAX_PAGE, desired - len(rows))
-        page_sql = (
-            _page_sql(query_sql, offset, page_limit) if offset > 0 else _strip_sql(query_sql)
-        )
+        page_sql = _page_sql(query_sql, offset, page_limit) if offset > 0 else _strip_sql(query_sql)
         try:
             data = _execute_query(client, page_sql, page_limit)
         except ApiError as exc:
@@ -157,6 +177,23 @@ def _run_paginated(client: Any, query_sql: str, desired: int) -> dict[str, Any]:
                 page=len(pages) + 1,
                 offset=offset,
                 rows_so_far=len(rows),
+            )
+        if _no_readable_rows(data):
+            result = data.get("result")
+            emit_error(
+                err(
+                    "QUERY_ROWS_MISSING",
+                    f"Query result on page {len(pages) + 1} carried no 'rows' list.",
+                    f"sumcli requests row_format={_ROW_FORMAT!r} and reads only "
+                    "result.rows. Check that sum-api honours that row_format.",
+                    # Keys only: the offending payload holds the whole result set.
+                    data={
+                        "page": len(pages) + 1,
+                        "offset": offset,
+                        "payload_keys": sorted(data.keys()),
+                        "result_keys": sorted(result.keys()) if isinstance(result, dict) else [],
+                    },
+                )
             )
         pages.append(data)
         page_rows = _extract_query_rows(data)
