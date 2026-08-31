@@ -136,7 +136,7 @@ A published version is permanent and can never be replaced.
 
 ```bash
 sumcli config set-profile onboard2 \
-  --base-url https://sandbox-api.summation.com
+  --base-url https://api-<tenant>.summation.com
 
 sumcli config use onboard2
 sumcli --profile onboard2 auth login
@@ -147,7 +147,7 @@ sumcli --profile onboard2 auth whoami | jq .
 
 ```bash
 sumcli config set-profile onboard2 \
-  --base-url https://sandbox-api.summation.com \
+  --base-url https://api-<tenant>.summation.com \
   --client-id "$SUM_API_CLIENT_ID" \
   --client-secret "$SUM_API_CLIENT_SECRET"
 
@@ -372,7 +372,7 @@ Precedence is **field-specific** (there is no single global env-beats-file rule)
 1. CLI `--base-url`
 2. `SUM_API_BASE_URL`
 3. Profile section `base_url` in the config file
-4. `https://sandbox-api.summation.com`
+4. `https://api.summation.com`
 
 ### Credentials (`client_id`, `client_secret`, `access_token`, `m2m_scope`)
 

@@ -92,7 +92,7 @@ sumcli auth whoami | jq .
 
 ```bash
 sumcli config set-profile my-org \
-  --base-url https://sandbox-api.summation.com
+  --base-url https://api-<tenant>.summation.com
 
 sumcli config use my-org                       # make it the active profile
 sumcli auth login                              # log in against that profile
@@ -110,7 +110,7 @@ sumcli config clear-project --profile my-org       # undo
 
 ```bash
 sumcli config set-profile my-org \
-  --base-url https://sandbox-api.summation.com \
+  --base-url https://api-<tenant>.summation.com \
   --client-id "$CLIENT_ID" \
   --client-secret "$CLIENT_SECRET"
 

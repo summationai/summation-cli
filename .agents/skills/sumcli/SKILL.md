@@ -75,7 +75,7 @@ Project-scoped commands accept `--project` when no default is set.
 
 Config file: `~/.summation/summation-config` (override with `SUMMATION_CONFIG_FILE`).
 
-**Base URL is tenant-specific.** Each tenant has its own API host (e.g. `https://sandbox-api-<tenant>.summation.com`, `https://api-<tenant>.summation.com`). Do **not** assume `https://sandbox-api.summation.com` — that is only the CLI's built-in fallback when nothing else is set. Ask the user for their tenant API URL, or reuse `SUM_API_BASE_URL` / an existing profile (`sumcli config active`, `sumcli config list`).
+**Base URL is tenant-specific.** Each tenant has its own API host (e.g. `https://sandbox-api-<tenant>.summation.com`, `https://api-<tenant>.summation.com`). Do **not** assume `https://api.summation.com` — that is only the CLI's built-in fallback when nothing else is set. Ask the user for their tenant API URL, or reuse `SUM_API_BASE_URL` / an existing profile (`sumcli config active`, `sumcli config list`).
 
 **Device login (typical):**
 

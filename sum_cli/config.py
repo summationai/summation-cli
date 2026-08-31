@@ -13,7 +13,7 @@ from sum_cli.config_store import (
 )
 from sum_cli.constants import DEVICE_LOGIN_CREDENTIAL_KEY, META_SECTION, TOKEN_EXPIRES_AT_KEY
 
-DEFAULT_BASE_URL = "https://sandbox-api.summation.com"
+DEFAULT_BASE_URL = "https://api.summation.com"
 DEFAULT_PROFILE = "default"
 
 
