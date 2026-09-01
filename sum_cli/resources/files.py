@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 
 from sum_cli.client import ApiError
@@ -116,6 +119,80 @@ _DOWNLOAD_FORMATS = ("raw", "pdf", "markdown", "docx")
 _FORMAT_SUFFIX = {"raw": "", "pdf": ".pdf", "markdown": ".md", "docx": ".docx"}
 
 
+# A presigned download is served straight from S3 and can run for minutes on a large file, so the
+# read timeout is generous while connect/pool stay short. Bytes stream to disk one chunk at a time,
+# so CLI memory is constant regardless of file size.
+_DOWNLOAD_TIMEOUT = httpx.Timeout(connect=15.0, read=300.0, write=30.0, pool=15.0)
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _download_url_response(ctx, pid: str, file_id: str, profile) -> dict:
+    with api_client(ctx, profile) as c:
+        try:
+            body = c.request("GET", f"/v1/projects/{pid}/files/{file_id}/download-url")
+        except ApiError as exc:
+            if exc.status != 404:
+                raise
+            emit_error(
+                err(
+                    "not_found",
+                    f"{file_id} has no raw content to download.",
+                    "If this is a document (.sdoc), render it with --format pdf|markdown|docx.",
+                )
+            )
+    data = unwrap_data(body or {}, "data") or body
+    return data if isinstance(data, dict) else {}
+
+
+def _safe_default_name(data: dict, file_id: str) -> str:
+    """A safe default download filename from the API's fileName — basename only, never a path.
+
+    The name comes from the file's stored path and is untrusted, so any directory component
+    (including ``..`` or an absolute path) is stripped. Falls back to the file id when nothing
+    usable remains, so the destination is always a plain name in the working directory.
+    """
+    raw = data.get("fileName") or data.get("file_name") or ""
+    name = Path(str(raw)).name.strip()
+    if not name or name in {".", ".."}:
+        return file_id
+    return name
+
+
+def _stream_url_to_file(url: str, dest: Path, file_id: str) -> int:
+    """Stream a presigned URL's bytes to ``dest`` a chunk at a time. Returns bytes written.
+
+    Writes to a UNIQUE temp file in the destination directory and renames onto ``dest`` on
+    success, so a mid-stream failure never leaves a truncated file at ``dest``, and the temp
+    file can never clobber an existing sibling the user already has.
+    """
+    total = 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.", suffix=".part")
+    partial = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            with httpx.stream("GET", url, timeout=_DOWNLOAD_TIMEOUT, follow_redirects=True) as resp:
+                if resp.status_code >= 400:
+                    resp.read()
+                    raise ApiError(resp.status_code, resp.text)
+                for chunk in resp.iter_bytes(_DOWNLOAD_CHUNK_BYTES):
+                    handle.write(chunk)
+                    total += len(chunk)
+        partial.replace(dest)  # atomic on the same filesystem; only a complete file reaches dest
+    except (httpx.HTTPError, ApiError) as exc:
+        # Any failure — transport drop, or the presigned URL itself 4xx-ing — leaves nothing at
+        # dest and no leftover temp file.
+        partial.unlink(missing_ok=True)
+        emit_error(
+            err(
+                "DOWNLOAD_FAILED",
+                f"Downloading {file_id} failed: {exc}",
+                "The download URL is short-lived (~15 min); re-run to mint a fresh one.",
+            )
+        )
+    return total
+
+
 @app.command("download")
 def download_file(
     ctx: typer.Context,
@@ -150,31 +227,50 @@ def download_file(
             )
         )
     pid = require_project(ctx, project)
+
+    # Raw bytes stream from a presigned URL straight to disk, so a file of any size (up to GBs)
+    # never buffers in the CLI or the API. Rendered documents are small generated artifacts, so
+    # they keep the simple buffered render path.
+    if format == "raw":
+        data = _download_url_response(ctx, pid, file_id, profile)
+        url = data.get("url")
+        if not url:
+            emit_error(
+                err(
+                    "NO_DOWNLOAD_URL",
+                    f"sum-api did not return a download URL for {file_id}.",
+                    "Confirm the file exists in the project and your credentials have agent:read.",
+                )
+            )
+        # With -o the caller owns the path (overwriting it is their intent). Without -o, write into
+        # a fresh isolated temp dir under the file's own name — matching the old temp-file default:
+        # it can neither clobber a file in the working directory nor escape it via a hostile name.
+        if output is not None:
+            dest = output
+        else:
+            dest = Path(tempfile.mkdtemp(prefix="sumcli-file-")) / _safe_default_name(data, file_id)
+        total = _stream_url_to_file(url, dest, file_id)
+        emit(ok({"path": str(dest), "bytes": total, "file_id": file_id, "format": format}))
+        return
+
     with api_client(ctx, profile) as c:
         try:
-            if format == "raw":
-                raw = c.request_bytes("GET", f"/v1/projects/{pid}/files/{file_id}/content")
-            else:
-                raw = c.request_bytes(
-                    "GET",
-                    f"/v1/projects/{pid}/reports/{file_id}/content",
-                    params={"format": format},
-                )
+            raw = c.request_bytes(
+                "GET",
+                f"/v1/projects/{pid}/reports/{file_id}/content",
+                params={"format": format},
+            )
         except ApiError as exc:
-            # A 404 on either route means the id isn't downloadable that way, not
-            # an auth problem. On the raw path it's usually an agent-generated
-            # document (.sdoc) with no raw bytes; on the render path it's usually a
-            # plain file or a wrong id. Point the caller at the other route instead
-            # of letting the generic not-found envelope suggest checking auth.
+            # A 404 on the render path is usually a plain file or a wrong id, not an auth problem.
             if exc.status != 404:
                 raise
-            if format == "raw":
-                message = f"{file_id} has no raw content to download."
-                hint = "If this is a document (.sdoc), render it with --format pdf|markdown|docx."
-            else:
-                message = f"{file_id} could not be rendered as {format}."
-                hint = "If this is a plain file, download it with --format raw (the default)."
-            emit_error(err("not_found", message, hint))
+            emit_error(
+                err(
+                    "not_found",
+                    f"{file_id} could not be rendered as {format}.",
+                    "If this is a plain file, download it with --format raw (the default).",
+                )
+            )
     if output:
         output.write_bytes(raw)
         dest = str(output)
