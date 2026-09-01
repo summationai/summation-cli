@@ -498,7 +498,7 @@
           },
           "snapshot_config": {
             "additionalProperties": true,
-            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor, required for every INCREMENTAL_* sync strategy and optional for FULL_REFRESH, in formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters (KEYSET requires a cursor); initial_query_parameters, which require a cursor; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}. A cursor-less resource rejects both placeholders, and may set constant query_parameters only under TOKEN or OFFSET pagination, where they are sent on every page; NEXT_LINK and LINK_HEADER follow a provider-built continuation URL and so reject query_parameters entirely. Optional source-to-destination field_mappings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
+            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor, required for every INCREMENTAL_* sync strategy and optional for FULL_REFRESH, in formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters (KEYSET requires a cursor); initial_query_parameters, which require a cursor; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}. A cursor-less resource rejects both placeholders, and may set constant query_parameters only under TOKEN or OFFSET pagination, where they are sent on every page; NEXT_LINK and LINK_HEADER follow a provider-built continuation URL and so reject query_parameters entirely. Optional source-to-destination field_mappings, post-mapping json_string_fields for nested values that must land as canonical JSON strings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
             "examples": [
               {
                 "enabled": true,
@@ -527,6 +527,9 @@
                       "initial_query_parameters": {
                         "$filter": "ModificationTimestamp ge 2026-01-01T00:00:00Z"
                       },
+                      "json_string_fields": [
+                        "raw_attributes"
+                      ],
                       "pagination": {
                         "data_pointer": "/value",
                         "max_pages_per_run": 1000,
@@ -563,6 +566,36 @@
           }
         },
         "title": "ConnectionWriteRequest",
+        "type": "object"
+      },
+      "ConnectionsListData": {
+        "properties": {
+          "connectors": {
+            "description": "The organization's data connections. Always present; empty when none exist. Connector objects carry camelCase, source-specific fields \u2014 see GET /v1/connections/data/types/{type} for a source's field vocabulary.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Connectors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connectors"
+        ],
+        "title": "ConnectionsListData",
+        "type": "object"
+      },
+      "ConnectionsListResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConnectionsListData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ConnectionsListResponse",
         "type": "object"
       },
       "ConversationFeedbackData": {
@@ -936,25 +969,99 @@
         "title": "FileWriteRequest",
         "type": "object"
       },
-      "GridTableCreateRequest": {
+      "GridTableColumnRequest": {
+        "additionalProperties": false,
         "properties": {
           "name": {
-            "description": "Name for the new calculation table, shown across Summation.",
+            "description": "Column name, unique within the table.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "nullable": {
+            "default": true,
+            "description": "Whether the column accepts nulls. Set false to require a value in every appended row.",
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "Column data type: string, integer, decimal, big_decimal, boolean, date, datetime, json, or uuid.",
+            "enum": [
+              "string",
+              "integer",
+              "decimal",
+              "big_decimal",
+              "boolean",
+              "date",
+              "datetime",
+              "json",
+              "uuid"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "GridTableColumnRequest",
+        "type": "object"
+      },
+      "GridTableCreateRequest": {
+        "properties": {
+          "columns": {
+            "description": "Columns of the new data table, in order. Required for kind=data; not allowed for kind=calc. An integer s_id primary key and a _sm_created_at timestamp are added automatically and must not be listed here.",
+            "items": {
+              "$ref": "#/components/schemas/GridTableColumnRequest"
+            },
+            "maxItems": 50,
+            "title": "Columns",
+            "type": "array"
+          },
+          "key_columns": {
+            "description": "Optional business-key columns, used to match rows on upsert (PUT /v1/tables/{table_id}/rows). Names must appear in columns. This is not the physical primary key, which is always the automatic s_id.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Key Columns",
+            "type": "array"
+          },
+          "kind": {
+            "default": "calc",
+            "description": "What kind of table to create. calc (the default) builds a calculation table from a SELECT query. data builds an empty appendable data table from a column schema, ready for row appends. Omit for the calculation behavior.",
+            "enum": [
+              "calc",
+              "data"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name for the new table, shown across Summation.",
             "maxLength": 255,
             "minLength": 1,
             "title": "Name",
             "type": "string"
           },
           "query": {
-            "description": "SELECT query that defines the calculation table's columns and rows (e.g. SELECT 1 as new_total).",
-            "minLength": 1,
-            "title": "Query",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SELECT query that defines the calculation table's columns and rows (e.g. SELECT 1 as new_total). Required for kind=calc; not allowed for kind=data.",
+            "title": "Query"
           }
         },
         "required": [
-          "name",
-          "query"
+          "name"
         ],
         "title": "GridTableCreateRequest",
         "type": "object"
@@ -1337,6 +1444,17 @@
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
+          },
+          "row_format": {
+            "default": "both",
+            "description": "Which row representation `result` should carry. Each value names the key it returns. `rows` is the compact map-per-row form: its column names are camelCased and therefore NOT the source names (`order_id` arrives as `orderId`), and because it is a map, output columns whose names collide after camelCasing \u2014 or that the query aliased to the same name \u2014 collapse to a single cell. `rows_with_column_order` preserves source names, order, and duplicates. `both` is the default and returns each of them. Choosing one drops the other, substantially reducing response size on wide reads; the chosen key is always present, empty when no rows match.",
+            "enum": [
+              "both",
+              "rows",
+              "rows_with_column_order"
+            ],
+            "title": "Row Format",
+            "type": "string"
           },
           "sql": {
             "minLength": 1,
@@ -2438,7 +2556,7 @@
             "type": "string"
           },
           "executionFormat": {
-            "description": "typed_graph for workflows built from a graph document, legacy_playbook for the older step-shaped workflows. Fixed when the workflow is created.",
+            "description": "typed_graph for workflows built from a graph document. Fixed when the workflow is created.",
             "title": "Executionformat",
             "type": "string"
           },
@@ -2833,7 +2951,7 @@
             "type": "object"
           },
           "status": {
-            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, unknown.",
+            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, completed_with_errors, unknown.",
             "title": "Status",
             "type": "string"
           },
@@ -5032,7 +5150,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -7275,7 +7395,7 @@
     },
     "/v1/grid/tables": {
       "post": {
-        "description": "Create a calculation table defined by a SELECT query. Creation is atomic: the table is removed if naming or query definition fails. The query becomes the table's defining expression; the table is not materialized yet. Materialize it with the materialize route once created.",
+        "description": "Create a grid table. Two kinds, chosen with kind:\n\nkind=calc (the default) creates a calculation table defined by a SELECT query. The query becomes the table's defining expression; the table is not materialized yet. Materialize it with the materialize route once created.\n\nkind=data creates an empty appendable data table from a column schema, for callers that own their own rows (app state, operator logs). The table is promoted on creation, so the id it returns accepts row appends immediately via POST /v1/tables/{table_id}/rows. An integer s_id primary key and a _sm_created_at timestamp are added automatically; s_id is caller-supplied on every append, not auto-generated. Use this rather than POST /v1/table-imports, which loads a table from an uploaded file and produces an import table that does not accept appends.\n\nCreation is atomic for both kinds: the table is removed if naming, the defining query, or any column fails.",
         "operationId": "create_grid_table",
         "requestBody": {
           "content": {
@@ -7374,7 +7494,7 @@
             ]
           }
         ],
-        "summary": "Create calculation table",
+        "summary": "Create grid table",
         "tags": [
           "Grid"
         ]
@@ -11869,7 +11989,7 @@
     },
     "/v1/query-executions": {
       "post": {
-        "description": "Execute read-only SQL and return rows synchronously.\n\nQueries are structurally bounded: every statement is wrapped as a\n``SELECT`` with a row ``limit`` (default 100, max 10000) \u2014 INSERT,\nUPDATE, and DELETE are rejected. Discover real table names first;\nnever guess.",
+        "description": "Execute read-only SQL and return rows synchronously.\n\nQueries are structurally bounded: every statement is wrapped as a\n``SELECT`` with a row ``limit`` (default 100, max 10000) \u2014 INSERT,\nUPDATE, and DELETE are rejected. Discover real table names first;\nnever guess.\n\nThe result carries two equivalent row representations. Set ``row_format``\nto ``rows`` or ``rows_with_column_order`` to receive only the one you read;\nthe default ``both`` preserves the historical response. Note that ``rows``\ncamelCases the column names themselves, so ``order_id`` arrives as\n``orderId`` \u2014 use ``rows_with_column_order`` when the source names matter.",
         "operationId": "create_query_execution",
         "requestBody": {
           "content": {
@@ -16517,7 +16637,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -16874,7 +16994,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17014,7 +17134,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17304,7 +17424,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {

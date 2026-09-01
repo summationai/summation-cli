@@ -460,12 +460,18 @@ OpenAPI drift is guarded offline against the bundled snapshot at `sum_cli/data/o
 ```bash
 python -m pytest tests/test_openapi_contract.py tests/test_load_spec.py -q
 # refresh snapshot after sum-api ships new routes:
-python scripts/refresh_openapi.py
-# verify bundled snapshot matches production (nightly automation + manual pre-release):
-python scripts/refresh_openapi.py --check
+python scripts/refresh_openapi.py --base-url https://sandbox-api.summation.com
+# verify the bundled snapshot still matches the host it was taken from:
+python scripts/refresh_openapi.py --check --base-url https://sandbox-api.summation.com
 ```
 
-Per-PR CI gates on the offline contract tests above only. Production reconciliation runs on a schedule via `.github/workflows/sumcli-openapi-snapshot.yaml` so unrelated backend PRs are not reddened when sum-api deploys ahead of the snapshot.
+The committed snapshot currently tracks **sandbox**, not production: `row_format` is live on `sandbox-api` and has not yet reached `api.summation.com`. Re-point both commands at the production base URL once that deploy lands.
+
+Per-PR CI (`.github/workflows/ci.yml`) runs `pytest -q` plus the installer tests, so it gates on the offline contract tests above only — it never reaches the network. Reconciling the snapshot against its source host is a manual step (`--check`), which keeps unrelated backend PRs from reddening when sum-api deploys ahead of the snapshot, but also means nothing notices the drift on its own.
+
+The contract tests cover paths, methods, query params, and — for request schemas that set `additionalProperties: false` — the top-level JSON body keys a call site sends literally. That last check only sees `json={...}` written inline; payloads assembled in a local variable are skipped, as are the many operations whose schemas accept unknown fields. It is deliberately sound rather than broad: it will not report a field that is fine, but it cannot vouch for every request body.
+
+A body field the CLI sends ahead of the snapshot's host is therefore a red suite until that snapshot is refreshed. That is the intended gate — a closed schema rejects unknown fields outright, so shipping early means a 422 on every call, not a degraded response. It follows that while the snapshot tracks sandbox, the gate only proves `queries run` works against sandbox; production still 422s until `row_format` deploys there.
 
 Command-tree action blurbs for API-backed commands are derived from the snapshot at runtime via `sum_cli/openapi_doc.py`; `config` and other local-only actions stay hand-written there. Composite commands (`tables import`, `reports verify`) have known doc/route alignment gaps — see comments in `openapi_doc.py`.
 
@@ -474,12 +480,13 @@ Command-tree action blurbs for API-backed commands are derived from the snapshot
 # Resource group titles and command one-line summaries: sum_cli/openapi_doc.py
 # (_RESOURCE_DESCRIPTIONS, _LOCAL_ACTION_BLURBS, apply_openapi_help). Do not duplicate
 # Typer group help= or command docstrings in resource modules.
-- OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`).
+- OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`; literal request-body keys must be declared by any schema that forbids unknown fields).
 - No imports from sum-api service code or gRPC clients.
 - Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).
+- `queries run` requests `row_format: "rows"`, so the API omits the duplicate `rowsWithColumnOrder` copy of every cell that the CLI never reads. Two consequences: column names arrive camelCased (`order_id` as `orderId`), and output columns that collide after camelCasing — or that the query aliased to the same name — collapse into one. Alias explicitly when a query would otherwise produce either. A result carrying no `rows` key is an error (`QUERY_ROWS_MISSING`) rather than zero rows, so a representation mismatch cannot be mistaken for an empty table.
 
 ### Network boundary
 
