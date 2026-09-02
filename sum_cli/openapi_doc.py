@@ -103,10 +103,6 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
         "PATCH",
         "/v1/connections/data/*/datasets/*",
     ): "Connection dataset update not exposed in sumcli.",
-    (
-        "DELETE",
-        "/v1/connections/data/*/datasets/*",
-    ): "Connection dataset detach not exposed in sumcli.",
     ("GET", "/v1/data-syncs/*/checkpoint"): "Data-sync checkpoint not exposed in sumcli.",
     ("POST", "/v1/data-syncs/*/pages"): "Data-sync page upload not exposed in sumcli.",
     ("GET", "/v1/data-syncs/*/pages/*"): "Data-sync page status not exposed in sumcli.",
@@ -646,6 +642,11 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         # "Disconnect" and "delete" differ subtly: disconnect revokes the agent's
         # access but keeps the record, so say which one this is.
         "app-disconnect": "Revoke the agent's access to an app connection, keeping the record.",
+        # Spec summary ("Detach connection dataset") does not mention --confirm or
+        # that DELETE returns before teardown finishes, which is why --wait exists.
+        "detach-dataset": (
+            "Detach a dataset from a connection (--confirm; --wait polls until gone)."
+        ),
     },
     "reports": {
         "verify": "Verify a report or document by file id (--wait/--no-wait, --follow).",

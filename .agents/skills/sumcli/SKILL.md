@@ -54,7 +54,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always
    - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
 3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
 6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
 7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
@@ -131,7 +131,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `workflows` | multi-step automations (typed graphs): list/show/create/update, activate, versions, runs, run now, node-types |
 | `files` | project file upload/download/list/delete |
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
-| `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
+| `connections` | data sources (CRUD, test, browse, datasets, attach-datasets, detach-dataset, snapshots) and app connectors (`app-*`) |
 | `grid` | status, sync, lineage, push, `create` (calc from query or empty data table from columns), `materialize` |
 
 ## Common workflows
@@ -264,9 +264,18 @@ Removing a connection:
 ```bash
 sumcli connections show "$CONN"                 # confirm the target first
 sumcli connections datasets "$CONN"             # see what you are about to orphan
+# Detach each dataset first — delete refuses while any remain attached.
+sumcli connections detach-dataset "$CONN" ds-... --confirm
 sumcli connections delete "$CONN" --confirm     # irreversible
 sumcli connections list                         # verify it is gone
 ```
+
+`detach-dataset` is destructive (`--confirm`) and **waits by default**. The DELETE
+returns `200` immediately, but teardown is asynchronous: a `connections delete`
+run right after still fails with "N dataset(s) still attached". `--wait` polls
+`connections datasets` until the id is gone (up to 60s) so a following delete
+is safe. `--no-wait` returns the pending teardown for callers that will poll
+themselves.
 
 **Best practices**
 
@@ -302,7 +311,11 @@ sumcli connections list                         # verify it is gone
    is 100 datasets per request, applied as one atomic batch.
 9. **Check what a delete orphans before running it.** Deleting is irreversible and
    takes down every dataset attached to that connection. List the datasets first, and
-   confirm the id with `show` — ids are easy to transpose.
+   confirm the id with `show` — ids are easy to transpose. To remove one dataset
+   without deleting the connection, use `connections detach-dataset --confirm`
+   (default `--wait`); do not call the raw DELETE. A scripted detach-then-delete
+   must wait — `--no-wait` followed immediately by `connections delete` is the
+   race that looks like a flaky CLI.
 10. **Do not leave test connections behind in a real tenant.** If you create one to
     exercise a flow, delete it in the same session. An inert record with dead
     credentials still shows up in the workspace UI as a broken connection.

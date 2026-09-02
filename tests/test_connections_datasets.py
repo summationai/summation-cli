@@ -821,3 +821,90 @@ def test_snapshots_rejects_out_of_range_limit(limit: str) -> None:
     assert result.exit_code != 0
     assert json.loads(result.stdout)["error"]["code"] == "INVALID_REQUEST"
     client.request.assert_not_called()
+
+
+# --- detach-dataset ---------------------------------------------------------
+
+
+def test_detach_dataset_requires_confirm() -> None:
+    result, client = _run(["connections", "detach-dataset", "conn_1", "ds_1"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "CONFIRM_REQUIRED"
+    client.request.assert_not_called()
+
+
+def test_detach_dataset_no_wait_deletes_without_polling() -> None:
+    result, client = _run(
+        ["connections", "detach-dataset", "conn_1", "ds_1", "--confirm", "--no-wait"],
+        {"data": {}},
+    )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)["result"]
+    assert body["detached"] == "ds_1"
+    assert body["connection_id"] == "conn_1"
+    assert body["teardown"] == "pending"
+    client.request.assert_called_once_with(
+        "DELETE",
+        "/v1/connections/data/conn_1/datasets/ds_1",
+        params={"confirm": True},
+    )
+
+
+def test_detach_dataset_wait_polls_until_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sum_cli.resources.connections.time.sleep", lambda _s: None)
+    client, cm = _mock_client()
+    client.request.side_effect = [
+        {"data": {}},
+        {"data": {"datasets": [{"id": "ds_1"}, {"id": "ds_2"}]}},
+        {"data": {"datasets": [{"id": "ds_2"}]}},
+    ]
+    with patch("sum_cli.resources.connections.api_client", return_value=cm):
+        result = runner.invoke(
+            app, ["connections", "detach-dataset", "conn_1", "ds_1", "--confirm"]
+        )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)["result"]
+    assert body["teardown"] == "complete"
+    assert body["detached"] == "ds_1"
+    calls = [c.args[:2] for c in client.request.call_args_list]
+    assert calls == [
+        ("DELETE", "/v1/connections/data/conn_1/datasets/ds_1"),
+        ("GET", "/v1/connections/data/conn_1/datasets"),
+        ("GET", "/v1/connections/data/conn_1/datasets"),
+    ]
+
+
+def test_detach_dataset_wait_matches_camel_case_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sum_cli.resources.connections.time.sleep", lambda _s: None)
+    client, cm = _mock_client()
+    client.request.side_effect = [
+        {"data": {}},
+        {"data": {"datasets": [{"datasetId": "ds_1"}]}},
+        {"data": {"datasets": []}},
+    ]
+    with patch("sum_cli.resources.connections.api_client", return_value=cm):
+        result = runner.invoke(
+            app, ["connections", "detach-dataset", "conn_1", "ds_1", "--confirm"]
+        )
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["result"]["teardown"] == "complete"
+    assert client.request.call_count == 3
+
+
+def test_detach_dataset_wait_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sum_cli.resources.connections.time.sleep", lambda _s: None)
+    monkeypatch.setattr("sum_cli.resources.connections._DETACH_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr("sum_cli.resources.connections._DETACH_POLL_SECONDS", 0)
+    client, cm = _mock_client()
+    client.request.side_effect = [
+        {"data": {}},
+        {"data": {"datasets": [{"id": "ds_1"}]}},
+    ]
+    with patch("sum_cli.resources.connections.api_client", return_value=cm):
+        result = runner.invoke(
+            app, ["connections", "detach-dataset", "conn_1", "ds_1", "--confirm"]
+        )
+    assert result.exit_code == 1
+    error = json.loads(result.stdout)["error"]
+    assert error["code"] == "DETACH_TIMEOUT"
+    assert "ds_1" in error["message"]
