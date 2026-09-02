@@ -68,7 +68,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always co
 | `files`       | Project-scoped files (`upload`, `download`, `list`, `show`, `import`, `delete`)                                                                      |
 | `filesystem`  | Connected filesystem roots such as SharePoint (`roots`, `list`, `upload`, `download`, `mkdir`, `delete`, `import-env`, `set-defaults`)               |
 | `catalog`     | Project catalog entries (`list`, `show`, `attach`, `detach`, `refresh`)                                                                              |
-| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
+| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `detach-dataset`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
 | `tables`      | Grid tables and CSV import (`tables import`); row loads via `append` or `upsert`; also `data`, `import-status`, `catalog-show`, `catalog-update` |
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
 | `grid`        | Grid `status`, `create` (`--kind calc`/`data`), `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
@@ -270,7 +270,7 @@ Project-scoped commands accept `--project` when no default project is configured
 
 ## Behavior
 
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

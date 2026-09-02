@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +17,8 @@ from sum_cli.commands import (
     require_confirm,
     unwrap_data,
 )
-from sum_cli.output import emit, invalid_request, ok, truncate_list
+from sum_cli.output import action, emit, emit_error, err, invalid_request, ok, truncate_list
+from sum_cli.stream_options import WaitOption
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -30,6 +32,11 @@ _MAX_SNAPSHOT_LIMIT = 50
 # command line. Anything else is rejected rather than dropped — a silently ignored
 # snapshot_config would leave snapshotting off with exit 0.
 _CONFIG_FILE_KEYS = ("config", "secrets", "snapshot_config")
+# DELETE /datasets/{id} returns 200 before the attachment is actually gone, so a
+# following `connections delete` still fails with "N dataset(s) still attached"
+# for a few seconds. Poll the list until the id disappears.
+_DETACH_POLL_SECONDS = 2.0
+_DETACH_TIMEOUT_SECONDS = 60.0
 
 
 def _config_file_body(path: Path, *, flag_hint: str) -> dict:
@@ -57,6 +64,56 @@ def _config_file_body(path: Path, *, flag_hint: str) -> dict:
             'Use {"config": {"host": "..."}}, not a string, list, or null.',
         )
     return extra
+
+
+def _dataset_ids(data: object) -> set[str]:
+    """Ids from a datasets list payload, covering snake and camel field names."""
+    ids: set[str] = set()
+    for item in extract_list(data, "datasets"):
+        if not isinstance(item, dict):
+            continue
+        for key in ("id", "datasetId", "dataset_id"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                ids.add(value)
+    return ids
+
+
+def _wait_until_dataset_gone(client: object, *, connection_id: str, dataset_id: str) -> None:
+    """Block until ``dataset_id`` is absent from the connection's dataset list.
+
+    The detach DELETE is acknowledged before teardown finishes. Sleep first so we
+    never treat the immediate post-DELETE list as proof that delete-connection is
+    safe, then poll until the id is gone or the timeout fires.
+    """
+    deadline = time.monotonic() + _DETACH_TIMEOUT_SECONDS
+    path = f"/v1/connections/data/{connection_id}/datasets"
+    while True:
+        time.sleep(_DETACH_POLL_SECONDS)
+        body = client.request("GET", path)  # type: ignore[attr-defined]
+        data = unwrap_data(body or {}, "data")
+        if dataset_id not in _dataset_ids(data):
+            return
+        if time.monotonic() >= deadline:
+            emit_error(
+                err(
+                    "DETACH_TIMEOUT",
+                    f"Dataset {dataset_id} is still attached after "
+                    f"{int(_DETACH_TIMEOUT_SECONDS)}s.",
+                    "Teardown is asynchronous. Poll `connections datasets` until the "
+                    "dataset is gone, then retry `connections delete`.",
+                    next_actions=[
+                        action(
+                            "List remaining datasets",
+                            f"sumcli connections datasets {connection_id}",
+                        ),
+                        action(
+                            "Delete the connection once datasets are gone",
+                            f"sumcli connections delete {connection_id} --confirm",
+                        ),
+                    ],
+                )
+            )
 
 
 @app.command("list")
@@ -391,6 +448,45 @@ def attach_datasets(
                 "datasets": extract_list(data, "datasets"),
                 "connection_id": connection_id,
             }
+        )
+    )
+
+
+@app.command("detach-dataset")
+def detach_dataset(
+    ctx: typer.Context,
+    connection_id: Annotated[str, typer.Argument(help="Connection id.")],
+    dataset_id: Annotated[str, typer.Argument(help="Dataset id on this connection.")],
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    wait: WaitOption = True,
+    profile: ProfileOption = None,
+) -> None:
+    """Detach one dataset. DELETE returns before teardown finishes; --wait polls until gone."""
+    require_confirm(confirm, action_name="connections detach-dataset")
+    path = f"/v1/connections/data/{connection_id}/datasets/{dataset_id}"
+    with api_client(ctx, profile) as c:
+        body = c.request("DELETE", path, params=api_confirm_params())
+        if wait:
+            _wait_until_dataset_gone(c, connection_id=connection_id, dataset_id=dataset_id)
+    teardown = "complete" if wait else "pending"
+    emit(
+        ok(
+            {
+                "detached": dataset_id,
+                "connection_id": connection_id,
+                "teardown": teardown,
+                "result": unwrap_data(body or {}, "data") or body,
+            },
+            next_actions=[
+                action(
+                    "List remaining datasets",
+                    f"sumcli connections datasets {connection_id}",
+                ),
+                action(
+                    "Delete the connection",
+                    f"sumcli connections delete {connection_id} --confirm",
+                ),
+            ],
         )
     )
 
