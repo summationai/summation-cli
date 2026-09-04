@@ -86,11 +86,6 @@ class CallSite:
 UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/v1/auth/logout"): "No sumcli logout; sessions are profile-scoped.",
     ("GET", "/v1/chat-models"): "Chat model listing not exposed in sumcli.",
-    ("POST", "/v1/projects/*/files/uploads"): "Project file uploads not exposed in sumcli.",
-    (
-        "POST",
-        "/v1/projects/*/files/uploads/*/finalize",
-    ): "Project file uploads not exposed in sumcli.",
     ("GET", "/v1/projects/*/reports"): "Report listing is via files, not a dedicated command.",
     ("DELETE", "/v1/projects/*/reports/*"): "Report delete is via files delete.",
     ("GET", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
