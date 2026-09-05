@@ -581,7 +581,10 @@ def _humanize_operation_id(operation_id: str | None) -> str | None:
 # Resource groupings stay curated in this module (see also apply_openapi_help).
 _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "auth": "Inspect authentication state.",
-    "config": "Manage config profiles and the active working session (default ~/.summation/summation-config; override with SUMMATION_CONFIG_FILE).",
+    "config": (
+        "Manage config profiles and the active working session (default "
+        "~/.summation/summation-config; override with SUMMATION_CONFIG_FILE)."
+    ),
     "tenant": "Organization and tenant metadata.",
     "projects": "Manage projects.",
     "chats": "Chats (Addison conversations).",
@@ -597,6 +600,9 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "views": "Summation views.",
     "grid": "Grid status, sync, lineage, and table creation (calc or data).",
     "queries": "Read-only SQL execution.",
+    "verification-tests": (
+        "Custom verification-test definitions, scoped overlays, and effective-set previews."
+    ),
 }
 
 # Hand-written action blurbs (see sum_cli/resources/__init__.py — do not duplicate in handlers).
@@ -611,7 +617,9 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
 #   (same pattern as _STREAMING_ACTION_SUFFIXES on reports.generate).
 _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
     "auth": {
-        "login": "Start interactive device login by default; use --m2m to persist a machine session.",
+        "login": (
+            "Start interactive device login by default; use --m2m to persist a machine session."
+        ),
         "logout": "Revoke the stored device-login credential for the profile.",
         "token": "Show redacted bearer token for the active session.",
         # ``whoami`` (GET /v1/me) and ``status`` (GET /v1/auth/status) both carry the
@@ -710,6 +718,21 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "set-defaults": "Persist --root/--path defaults in config (--provider required).",
         "import-env": (
             "Import SHAREPOINT_* from a skill-style env file into ~/.summation/summation-config."
+        ),
+    },
+    "verification-tests": {
+        "validate": "Validate a custom-test bundle offline without authenticating or sending it.",
+        "upload": (
+            "Validate and create custom verification-test definitions (--dry-run stays offline)."
+        ),
+        "list": "List custom verification-test definitions, optionally filtered and bounded.",
+        "attach": (
+            "Create an add overlay or a removal overlay at tenant, project, or artifact scope."
+        ),
+        "list-attachments": "List active raw attachments, including the ids used by detach.",
+        "detach": "Soft-detach an attachment by id (--confirm; distinct from a removal overlay).",
+        "preview": (
+            "Preview the complete inherited verification-test set and provenance for a scope."
         ),
     },
 }
@@ -825,7 +848,10 @@ def build_command_tree_envelope() -> dict:
         {
             "name": "sumcli",
             "version": __version__,
-            "description": "sumcli — public Summation CLI (sum-api /v1). Pattern: sumcli <resource> <action> [--flags]",
+            "description": (
+                "sumcli — public Summation CLI (sum-api /v1). Pattern: "
+                "sumcli <resource> <action> [--flags]"
+            ),
             "resources": build_resources(),
         },
         next_actions=[

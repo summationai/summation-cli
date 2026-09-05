@@ -73,9 +73,23 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always co
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
 | `grid`        | Grid `status`, `create` (`--kind calc`/`data`), `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
 | `queries`     | Read-only SQL execution (`queries run`)                                                                                                              |
+| `verification-tests` | Custom verification tests (`validate`, `upload`, `list`, `attach`, `list-attachments`, `preview`, `detach`)                                  |
 
 
 Run `sumcli | jq '.result.resources'` for the live command tree with action blurbs, or `sumcli <resource> --help` for flags.
+
+### Custom verification tests
+
+```bash
+sumcli verification-tests validate --bundle ./tests.yaml
+sumcli verification-tests upload --bundle ./tests.yaml
+sumcli verification-tests attach --scope project --subject-type deck \
+  --op add --custom-test-id cvt-...
+sumcli verification-tests preview --scope project --subject-type deck
+sumcli verification-tests detach vta-... --scope project --confirm
+```
+
+Validation is offline. Project scope falls back to the profile's default project, while cross-org project calls (`--target-org ORG`) require `--project`. Mutation `--dry-run` prints the exact request without authentication or network access. A removal overlay (`attach --op remove --target-ref ... --confirm`) suppresses a test that currently runs for the scope, so it requires `--confirm`; detaching an attachment (`detach ... --confirm`) is a distinct operation.
 
 ## Quickstart
 
@@ -270,7 +284,7 @@ Project-scoped commands accept `--project` when no default project is configured
 
 ## Behavior
 
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

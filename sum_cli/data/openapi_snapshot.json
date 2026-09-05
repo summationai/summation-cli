@@ -332,6 +332,18 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "snapshotUpperId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional fixed numeric source-id ceiling for an authoritative snapshot sweep.",
+            "title": "Snapshotupperid"
           }
         },
         "required": [
@@ -498,7 +510,7 @@
           },
           "snapshot_config": {
             "additionalProperties": true,
-            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor, required for every INCREMENTAL_* sync strategy and optional for FULL_REFRESH, in formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters (KEYSET requires a cursor); initial_query_parameters, which require a cursor; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}. A cursor-less resource rejects both placeholders, and may set constant query_parameters only under TOKEN or OFFSET pagination, where they are sent on every page; NEXT_LINK and LINK_HEADER follow a provider-built continuation URL and so reject query_parameters entirely. Optional source-to-destination field_mappings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
+            "description": "Connector-level snapshot policy. Only HTTP/REST connections may set snapshot_config.http_replication; never put http_replication in connector config or dataset snapshot settings. The object accepts version=1, validate_server_address (optional; true is the only accepted value \u2014 server-address validation cannot be disabled through this API), connector-scoped limits, and resources. Each resource defines request_path; cursor, required for every INCREMENTAL_* sync strategy and optional for FULL_REFRESH, in formats RFC3339, STRING, or INTEGER; optional composite tie-breaker and DESTINATION_MAX or EXPLICIT bootstrap; pagination modes NEXT_LINK and TOKEN using JSON pointers, LINK_HEADER using the RFC 8288 Link response header, or KEYSET and OFFSET using query parameters (KEYSET requires a cursor); initial_query_parameters, which require a cursor; query_parameters containing ${cursor} and, for a composite cursor, ${tie_breaker}. A cursor-less resource rejects both placeholders, and may set constant query_parameters only under TOKEN or OFFSET pagination, where they are sent on every page; NEXT_LINK and LINK_HEADER follow a provider-built continuation URL and so reject query_parameters entirely. Optional source-to-destination field_mappings, post-mapping json_string_fields for nested values that must land as canonical JSON strings, tombstone, and execution_order. Data Management validates the complete configuration. Encode integers above 2^53-1 as strings (INTEGER-format cursor values are parsed back losslessly). PATCH semantics: a present snapshot_config replaces the stored policy, with one protection \u2014 on HTTP connections, omitting the http_replication key preserves the stored http_replication, so clients that do not round-trip it cannot erase it. Include http_replication to replace it, or set it to null to clear it. Omit the snapshot_config field entirely to leave the whole policy unchanged.",
             "examples": [
               {
                 "enabled": true,
@@ -527,6 +539,9 @@
                       "initial_query_parameters": {
                         "$filter": "ModificationTimestamp ge 2026-01-01T00:00:00Z"
                       },
+                      "json_string_fields": [
+                        "raw_attributes"
+                      ],
                       "pagination": {
                         "data_pointer": "/value",
                         "max_pages_per_run": 1000,
@@ -563,6 +578,36 @@
           }
         },
         "title": "ConnectionWriteRequest",
+        "type": "object"
+      },
+      "ConnectionsListData": {
+        "properties": {
+          "connectors": {
+            "description": "The organization's data connections. Always present; empty when none exist. Connector objects carry camelCase, source-specific fields \u2014 see GET /v1/connections/data/types/{type} for a source's field vocabulary.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Connectors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connectors"
+        ],
+        "title": "ConnectionsListData",
+        "type": "object"
+      },
+      "ConnectionsListResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConnectionsListData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ConnectionsListResponse",
         "type": "object"
       },
       "ConversationFeedbackData": {
@@ -751,6 +796,107 @@
         "title": "CsvParsingInfoRequest",
         "type": "object"
       },
+      "CustomTestBundle": {
+        "additionalProperties": false,
+        "description": "The uploaded bundle: one subject type's custom tests for a tenant.",
+        "properties": {
+          "subject_type": {
+            "enum": [
+              "html",
+              "document",
+              "deck",
+              "workbook"
+            ],
+            "title": "Subject Type",
+            "type": "string"
+          },
+          "tests": {
+            "items": {
+              "$ref": "#/components/schemas/CustomTestBundleEntry"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Tests",
+            "type": "array"
+          },
+          "version": {
+            "const": "custom-test-bundle/v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "subject_type",
+          "tests"
+        ],
+        "title": "CustomTestBundle",
+        "type": "object"
+      },
+      "CustomTestBundleEntry": {
+        "additionalProperties": false,
+        "description": "One test in an upload bundle \u2014 exactly the engine RubricTest fields, nothing else.",
+        "properties": {
+          "category": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Category",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "pass_criteria": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Pass Criteria",
+            "type": "string"
+          },
+          "render_dependent": {
+            "default": false,
+            "title": "Render Dependent",
+            "type": "boolean"
+          },
+          "requiredness": {
+            "default": "advisory",
+            "enum": [
+              "advisory",
+              "blocking"
+            ],
+            "title": "Requiredness",
+            "type": "string"
+          },
+          "test_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Test Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "test_id",
+          "category",
+          "name",
+          "pass_criteria"
+        ],
+        "title": "CustomTestBundleEntry",
+        "type": "object"
+      },
       "DatasetAttachSpec": {
         "properties": {
           "description": {
@@ -853,6 +999,131 @@
         "title": "DatasetAttachSpec",
         "type": "object"
       },
+      "EffectiveVerificationTest": {
+        "properties": {
+          "checkRef": {
+            "title": "Checkref",
+            "type": "string"
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displayname"
+          },
+          "executorRef": {
+            "title": "Executorref",
+            "type": "string"
+          },
+          "executorVersionId": {
+            "title": "Executorversionid",
+            "type": "string"
+          },
+          "requiredness": {
+            "enum": [
+              "advisory",
+              "blocking"
+            ],
+            "title": "Requiredness",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "testRef": {
+            "title": "Testref",
+            "type": "string"
+          },
+          "testVersionId": {
+            "title": "Testversionid",
+            "type": "string"
+          },
+          "versionId": {
+            "title": "Versionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkRef",
+          "versionId",
+          "executorRef",
+          "executorVersionId",
+          "testRef",
+          "testVersionId",
+          "requiredness",
+          "source"
+        ],
+        "title": "EffectiveVerificationTest",
+        "type": "object"
+      },
+      "EffectiveVerificationTestsData": {
+        "properties": {
+          "effective": {
+            "items": {
+              "$ref": "#/components/schemas/EffectiveVerificationTest"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
+          "provenance": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationTestProvenance"
+            },
+            "title": "Provenance",
+            "type": "array"
+          },
+          "scope": {
+            "enum": [
+              "tenant",
+              "project",
+              "artifact"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "scopeId": {
+            "title": "Scopeid",
+            "type": "string"
+          },
+          "subjectType": {
+            "enum": [
+              "html",
+              "document",
+              "deck",
+              "workbook"
+            ],
+            "title": "Subjecttype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "scopeId",
+          "subjectType",
+          "effective",
+          "provenance"
+        ],
+        "title": "EffectiveVerificationTestsData",
+        "type": "object"
+      },
+      "EffectiveVerificationTestsResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EffectiveVerificationTestsData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "EffectiveVerificationTestsResponse",
+        "type": "object"
+      },
       "FileImportRequest": {
         "properties": {
           "chat_id": {
@@ -936,25 +1207,99 @@
         "title": "FileWriteRequest",
         "type": "object"
       },
-      "GridTableCreateRequest": {
+      "GridTableColumnRequest": {
+        "additionalProperties": false,
         "properties": {
           "name": {
-            "description": "Name for the new calculation table, shown across Summation.",
+            "description": "Column name, unique within the table.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "nullable": {
+            "default": true,
+            "description": "Whether the column accepts nulls. Set false to require a value in every appended row.",
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "Column data type: string, integer, decimal, big_decimal, boolean, date, datetime, json, or uuid.",
+            "enum": [
+              "string",
+              "integer",
+              "decimal",
+              "big_decimal",
+              "boolean",
+              "date",
+              "datetime",
+              "json",
+              "uuid"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "GridTableColumnRequest",
+        "type": "object"
+      },
+      "GridTableCreateRequest": {
+        "properties": {
+          "columns": {
+            "description": "Columns of the new data table, in order. Required for kind=data; not allowed for kind=calc. An integer s_id primary key and a _sm_created_at timestamp are added automatically and must not be listed here.",
+            "items": {
+              "$ref": "#/components/schemas/GridTableColumnRequest"
+            },
+            "maxItems": 50,
+            "title": "Columns",
+            "type": "array"
+          },
+          "key_columns": {
+            "description": "Optional business-key columns, used to match rows on upsert (PUT /v1/tables/{table_id}/rows). Names must appear in columns. This is not the physical primary key, which is always the automatic s_id.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Key Columns",
+            "type": "array"
+          },
+          "kind": {
+            "default": "calc",
+            "description": "What kind of table to create. calc (the default) builds a calculation table from a SELECT query. data builds an empty appendable data table from a column schema, ready for row appends. Omit for the calculation behavior.",
+            "enum": [
+              "calc",
+              "data"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name for the new table, shown across Summation.",
             "maxLength": 255,
             "minLength": 1,
             "title": "Name",
             "type": "string"
           },
           "query": {
-            "description": "SELECT query that defines the calculation table's columns and rows (e.g. SELECT 1 as new_total).",
-            "minLength": 1,
-            "title": "Query",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SELECT query that defines the calculation table's columns and rows (e.g. SELECT 1 as new_total). Required for kind=calc; not allowed for kind=data.",
+            "title": "Query"
           }
         },
         "required": [
-          "name",
-          "query"
+          "name"
         ],
         "title": "GridTableCreateRequest",
         "type": "object"
@@ -1141,7 +1486,7 @@
           },
           "schedule": {
             "$ref": "#/components/schemas/ScheduleExpression",
-            "description": "Schedule cadence and timezone."
+            "description": "Schedule cadence and timezone. When workflows are enabled, only one_time, daily, weekly, and monthly cadences recurring every one period can instead be created through /v1/workflows; other new cadences are unavailable."
           },
           "target": {
             "$ref": "#/components/schemas/PlaybookScheduleTargetRequest"
@@ -1337,6 +1682,17 @@
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
+          },
+          "row_format": {
+            "default": "both",
+            "description": "Which row representation `result` should carry. Each value names the key it returns. `rows` is the compact map-per-row form: its column names are camelCased and therefore NOT the source names (`order_id` arrives as `orderId`), and because it is a map, output columns whose names collide after camelCasing \u2014 or that the query aliased to the same name \u2014 collapse to a single cell. `rows_with_column_order` preserves source names, order, and duplicates. `both` is the default and returns each of them. Choosing one drops the other, substantially reducing response size on wide reads; the chosen key is always present, empty when no rows match.",
+            "enum": [
+              "both",
+              "rows",
+              "rows_with_column_order"
+            ],
+            "title": "Row Format",
+            "type": "string"
           },
           "sql": {
             "minLength": 1,
@@ -1698,6 +2054,19 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "snapshotUpperId": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional fixed numeric source-id ceiling for an authoritative snapshot sweep.",
+            "title": "Snapshotupperid"
           }
         },
         "required": [
@@ -1738,7 +2107,14 @@
       "SourcePagePublic": {
         "properties": {
           "committed_checkpoint": {
-            "$ref": "#/components/schemas/SourceCheckpoint"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "completed_at": {
             "anyOf": [
@@ -1788,9 +2164,32 @@
             "title": "Id",
             "type": "string"
           },
+          "mutation_mode": {
+            "default": "UPSERT",
+            "enum": [
+              "UPSERT",
+              "DELETE_KEYS",
+              "REPLACE_SCOPES",
+              "AUTHORITATIVE_SNAPSHOT"
+            ],
+            "title": "Mutation Mode",
+            "type": "string"
+          },
           "row_count": {
+            "description": "Submitted destination-record count; zero is valid for an empty parent scope.",
             "title": "Row Count",
             "type": "integer"
+          },
+          "rows_deleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Deleted"
           },
           "rows_inserted": {
             "anyOf": [
@@ -1825,6 +2224,12 @@
             ],
             "title": "Rows Updated"
           },
+          "scope_count": {
+            "default": 0,
+            "description": "Number of complete parent scopes reconciled by this page.",
+            "title": "Scope Count",
+            "type": "integer"
+          },
           "status": {
             "description": "CREATING, COMMITTING, and RUNNING are non-terminal; SUCCEEDED and FAILED are terminal.",
             "enum": [
@@ -1857,7 +2262,6 @@
           "id",
           "sync_id",
           "status",
-          "committed_checkpoint",
           "row_count"
         ],
         "title": "SourcePagePublic",
@@ -1878,10 +2282,211 @@
       "SourcePageSubmitRequest": {
         "additionalProperties": false,
         "description": "One bounded NetSuite REST page and its authoritative check-and-set cursor.",
+        "oneOf": [
+          {
+            "properties": {
+              "mutation_mode": {
+                "enum": [
+                  "UPSERT"
+                ]
+              },
+              "records": {
+                "maxItems": 1000
+              }
+            },
+            "required": [
+              "expected_checkpoint",
+              "next_checkpoint"
+            ],
+            "title": "Scheduled UPSERT page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "DELETE_KEYS"
+              },
+              "record_cursors": {
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              "records": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "expected_checkpoint",
+              "next_checkpoint",
+              "records",
+              "record_cursors"
+            ],
+            "title": "Scheduled DELETE_KEYS page"
+          },
+          {
+            "properties": {
+              "expected_checkpoint": {
+                "type": "null"
+              },
+              "mutation_mode": {
+                "const": "DELETE_KEYS"
+              },
+              "next_checkpoint": {
+                "type": "null"
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "sync_generation",
+              "records"
+            ],
+            "title": "Checkpoint-independent DELETE_KEYS page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "REPLACE_SCOPES"
+              },
+              "reconcile_scopes": {
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 5000
+              },
+              "scope_columns": {
+                "maxItems": 8,
+                "minItems": 1
+              },
+              "scope_cursors": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "expected_checkpoint",
+              "next_checkpoint",
+              "scope_columns",
+              "reconcile_scopes",
+              "scope_cursors"
+            ],
+            "title": "Scheduled scoped REPLACE_SCOPES page"
+          },
+          {
+            "properties": {
+              "expected_checkpoint": {
+                "type": "null"
+              },
+              "mutation_mode": {
+                "const": "REPLACE_SCOPES"
+              },
+              "next_checkpoint": {
+                "type": "null"
+              },
+              "reconcile_scopes": {
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 0
+              },
+              "scope_columns": {
+                "maxItems": 8,
+                "minItems": 1
+              },
+              "scope_cursors": {
+                "maxItems": 0
+              },
+              "tombstone_scopes": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "sync_generation",
+              "scope_columns",
+              "reconcile_scopes",
+              "tombstone_scopes"
+            ],
+            "title": "Checkpoint-independent REPLACE_SCOPES page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "REPLACE_SCOPES"
+              },
+              "reconcile_scopes": {
+                "maxItems": 0
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 0
+              },
+              "scope_columns": {
+                "maxItems": 0
+              },
+              "scope_cursors": {
+                "maxItems": 0
+              },
+              "tombstone_scopes": {
+                "maxItems": 0
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "expected_checkpoint",
+              "next_checkpoint"
+            ],
+            "title": "Scheduled terminal REPLACE_SCOPES page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "AUTHORITATIVE_SNAPSHOT"
+              },
+              "records": {
+                "maxItems": 1000
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "sync_generation",
+              "expected_checkpoint",
+              "next_checkpoint",
+              "snapshot_complete",
+              "source_snapshot_upper_id"
+            ],
+            "title": "Authoritative snapshot page"
+          }
+        ],
         "properties": {
           "expected_checkpoint": {
-            "$ref": "#/components/schemas/SourceCheckpoint",
-            "description": "Checkpoint that must currently be committed for this sync."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Checkpoint that must currently be committed for a scheduled source page."
           },
           "idempotency_key": {
             "description": "Stable caller-generated key for this exact source page; reuse it after timeouts.",
@@ -1890,21 +2495,31 @@
             "title": "Idempotency Key",
             "type": "string"
           },
+          "mutation_mode": {
+            "default": "UPSERT",
+            "description": "UPSERT applies complete records, DELETE_KEYS removes records by business key, REPLACE_SCOPES atomically replaces declared parent scopes, and AUTHORITATIVE_SNAPSHOT accumulates keyset pages before the page marked snapshot_complete removes every absent destination key.",
+            "enum": [
+              "UPSERT",
+              "DELETE_KEYS",
+              "REPLACE_SCOPES",
+              "AUTHORITATIVE_SNAPSHOT"
+            ],
+            "title": "Mutation Mode",
+            "type": "string"
+          },
           "next_checkpoint": {
-            "$ref": "#/components/schemas/SourceCheckpoint",
-            "description": "Checkpoint committed only after every record in this page applies successfully."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Checkpoint committed only after every record in a scheduled page applies successfully."
           },
-          "record_cursors": {
-            "description": "One ordered NetSuite (lastmodifieddate, id) tuple for each record. The service verifies that the terminal tuple exactly equals next_checkpoint before it can advance the durable cursor. May be omitted only when records is empty or omitted.",
-            "items": {
-              "$ref": "#/components/schemas/SourceRecordCursor"
-            },
-            "maxItems": 1000,
-            "title": "Record Cursors",
-            "type": "array"
-          },
-          "records": {
-            "description": "Up to 1,000 JSON objects containing strings, integers, booleans, or null. Decimal values must be encoded as strings. Nullable columns may be omitted. An empty or omitted list is reserved for the checkpoint-only transition from an empty bounded backfill to incremental mode.",
+          "reconcile_scopes": {
+            "description": "Complete parent scopes to reconcile, including scopes with no current child records.",
             "items": {
               "additionalProperties": {
                 "anyOf": [
@@ -1925,14 +2540,128 @@
               "type": "object"
             },
             "maxItems": 1000,
+            "title": "Reconcile Scopes",
+            "type": "array"
+          },
+          "record_cursors": {
+            "description": "One ordered NetSuite (lastmodifieddate, id) tuple for each record. The service verifies that the terminal tuple exactly equals next_checkpoint before it can advance the durable cursor. May be omitted only when records is empty or omitted.",
+            "items": {
+              "$ref": "#/components/schemas/SourceRecordCursor"
+            },
+            "maxItems": 1000,
+            "title": "Record Cursors",
+            "type": "array"
+          },
+          "records": {
+            "description": "JSON objects containing strings, integers, booleans, or null: up to 1,000 for UPSERT/DELETE_KEYS and 5,000 for REPLACE_SCOPES. Decimal values must be encoded as strings. Nullable columns may be omitted. An empty or omitted list is reserved for a checkpoint-only backfill transition or deleted parent scope.",
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
             "title": "Records",
+            "type": "array"
+          },
+          "scope_columns": {
+            "description": "Business-key prefix identifying a complete parent scope for REPLACE_SCOPES.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Scope Columns",
+            "type": "array"
+          },
+          "scope_cursors": {
+            "description": "One ordered source cursor per reconcile scope; the final cursor must equal next_checkpoint.",
+            "items": {
+              "$ref": "#/components/schemas/SourceRecordCursor"
+            },
+            "maxItems": 1000,
+            "title": "Scope Cursors",
+            "type": "array"
+          },
+          "snapshot_complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required final-page proof for AUTHORITATIVE_SNAPSHOT; omitted for every other mutation mode.",
+            "title": "Snapshot Complete"
+          },
+          "source_snapshot_upper_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^-?\\d+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required fixed maximum source id captured by an AUTHORITATIVE_SNAPSHOT's first SuiteQL query; omitted for every other mutation mode.",
+            "title": "Source Snapshot Upper Id"
+          },
+          "sync_generation": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable recipe-generation binding. Required for checkpoint-independent DELETE_KEYS and REPLACE_SCOPES requests and rejected if it is not the sync's current generation.",
+            "title": "Sync Generation"
+          },
+          "tombstone_scopes": {
+            "description": "Subset of reconcile_scopes whose parent was deleted. These delete-wins markers prevent a late parent snapshot from resurrecting children.",
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "maxItems": 1000,
+            "title": "Tombstone Scopes",
             "type": "array"
           }
         },
         "required": [
-          "idempotency_key",
-          "expected_checkpoint",
-          "next_checkpoint"
+          "idempotency_key"
         ],
         "title": "SourcePageSubmitRequest",
         "type": "object"
@@ -2373,6 +3102,317 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerificationTestAttachment": {
+        "properties": {
+          "customTestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customtestid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "add",
+              "remove"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "scope": {
+            "description": "Scope at which this overlay is attached.",
+            "enum": [
+              "tenant",
+              "project",
+              "artifact"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "scopeId": {
+            "title": "Scopeid",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subjectType": {
+            "enum": [
+              "html",
+              "document",
+              "deck",
+              "workbook"
+            ],
+            "title": "Subjecttype",
+            "type": "string"
+          },
+          "targetRef": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetref"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "scopeId",
+          "subjectType",
+          "op",
+          "status"
+        ],
+        "title": "VerificationTestAttachment",
+        "type": "object"
+      },
+      "VerificationTestAttachmentCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_test_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Custom definition id. Required only for op=add.",
+            "title": "Custom Test Id"
+          },
+          "op": {
+            "description": "Add a custom definition, or remove a test ref from the resolved set.",
+            "enum": [
+              "add",
+              "remove"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "scope": {
+            "description": "Overlay scope: tenant, project, or artifact.",
+            "enum": [
+              "tenant",
+              "project",
+              "artifact"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "scope_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+            "title": "Scope Id"
+          },
+          "subject_type": {
+            "description": "Artifact family this overlay affects.",
+            "enum": [
+              "html",
+              "document",
+              "deck",
+              "workbook"
+            ],
+            "title": "Subject Type",
+            "type": "string"
+          },
+          "target_ref": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved test ref to suppress. Required only for op=remove.",
+            "title": "Target Ref"
+          }
+        },
+        "required": [
+          "scope",
+          "subject_type",
+          "op"
+        ],
+        "title": "VerificationTestAttachmentCreateRequest",
+        "type": "object"
+      },
+      "VerificationTestAttachmentListResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationTestAttachment"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "VerificationTestAttachmentListResponse",
+        "type": "object"
+      },
+      "VerificationTestAttachmentResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VerificationTestAttachment"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "VerificationTestAttachmentResponse",
+        "type": "object"
+      },
+      "VerificationTestDefinition": {
+        "properties": {
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displayname"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "renderDependent": {
+            "title": "Renderdependent",
+            "type": "boolean"
+          },
+          "requiredness": {
+            "enum": [
+              "advisory",
+              "blocking"
+            ],
+            "title": "Requiredness",
+            "type": "string"
+          },
+          "testId": {
+            "title": "Testid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "testId",
+          "requiredness",
+          "renderDependent"
+        ],
+        "title": "VerificationTestDefinition",
+        "type": "object"
+      },
+      "VerificationTestDefinitionListResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationTestDefinition"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "showing": {
+            "title": "Showing",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "showing",
+          "total",
+          "truncated"
+        ],
+        "title": "VerificationTestDefinitionListResponse",
+        "type": "object"
+      },
+      "VerificationTestProvenance": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "ref",
+          "reason"
+        ],
+        "title": "VerificationTestProvenance",
+        "type": "object"
+      },
+      "VerificationTestUploadData": {
+        "properties": {
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationTestDefinition"
+            },
+            "title": "Created",
+            "type": "array"
+          }
+        },
+        "required": [
+          "created"
+        ],
+        "title": "VerificationTestUploadData",
+        "type": "object"
+      },
+      "VerificationTestUploadResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VerificationTestUploadData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "VerificationTestUploadResponse",
+        "type": "object"
+      },
       "ViewCatalogUpdateRequest": {
         "properties": {
           "agent_description": {
@@ -2438,7 +3478,7 @@
             "type": "string"
           },
           "executionFormat": {
-            "description": "typed_graph for workflows built from a graph document, legacy_playbook for the older step-shaped workflows. Fixed when the workflow is created.",
+            "description": "typed_graph for workflows built from a graph document. Fixed when the workflow is created.",
             "title": "Executionformat",
             "type": "string"
           },
@@ -2833,7 +3873,7 @@
             "type": "object"
           },
           "status": {
-            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, unknown.",
+            "description": "One of pending, dispatched, running, succeeded, failed, canceled, timed_out, completed_with_errors, unknown.",
             "title": "Status",
             "type": "string"
           },
@@ -3110,7 +4150,7 @@
         "type": "object"
       },
       "WorkflowSchedule": {
-        "description": "A trigger's cadence, field for field invertible into a WorkflowTriggerSchedule.\n\nThis is the read half of the same object the write half accepts: every field present here\nis one ``WorkflowTriggerSchedule`` takes, holding a value it accepts, so a caller can GET a\nworkflow, hand a trigger's ``schedule`` straight back on a PUT, and get the schedule it\nalready had. ``zoneId`` lives HERE rather than on the trigger for exactly that reason \u2014 the\nwrite model carries the timezone inside the schedule, and a projection that put it one\nlevel up would drop the timezone on every round trip that copied the schedule across.",
+        "description": "A trigger's stored cadence, including legacy shapes that are now read-only.\n\nEditor-supported cadences are field-for-field invertible into ``WorkflowTriggerSchedule``.\nBroader scheduler cadences remain visible so existing workflows can be diagnosed, but a write\nmust replace them with an editor-supported shape. ``zoneId`` lives HERE rather than on the\ntrigger because the write model carries the timezone inside the schedule; putting it one level\nup would drop the timezone on every supported round trip that copied the schedule across.",
         "properties": {
           "anchorDate": {
             "anyOf": [
@@ -3207,7 +4247,7 @@
             "title": "Timeofday"
           },
           "type": {
-            "description": "Cadence kind: cron, interval, one_time, daily, weekly, biweekly, monthly, or month_end.",
+            "description": "Stored cadence kind. Writes accept one_time, daily, weekly, and monthly; existing workflows may read as cron, interval, biweekly, or month_end until their cadence is replaced.",
             "title": "Type",
             "type": "string"
           },
@@ -3351,7 +4391,7 @@
       },
       "WorkflowTriggerRequest": {
         "additionalProperties": false,
-        "description": "One schedule trigger on a workflow.\n\nTriggers are a full replace-set on every write: a workflow's triggers are exactly the\nones the request carries, and any it omits are deleted along with their backing schedule.\nEcho the ``id`` of a trigger you are keeping so its stored settings survive the write.\n\nA trigger read back from a GET is field for field a trigger this model takes, in either\nspelling, so a caller can hand one straight back on a write.",
+        "description": "One schedule trigger on a workflow.\n\nTriggers are a full replace-set on every write: a workflow's triggers are exactly the\nones the request carries, and any it omits are deleted along with their backing schedule.\nEcho the ``id`` of a trigger you are keeping so its stored settings survive the write.\n\nAn editor-supported trigger read back from a GET is field for field a trigger this model takes,\nin either spelling, so a caller can hand it straight back on a write. Broader legacy scheduler\nshapes remain readable but must be replaced before this API will write the workflow.",
         "properties": {
           "enabled": {
             "default": true,
@@ -3398,33 +4438,8 @@
       },
       "WorkflowTriggerSchedule": {
         "additionalProperties": false,
-        "description": "A trigger's cadence and the timezone its local times are read in.\n\n``type`` is one of cron, interval, one_time, daily, weekly, biweekly, monthly, month_end,\nyearly, and it decides which other fields are required: cron needs ``cron_expression`` (5-field\nstandard or 6/7-field Quartz), interval needs ``every_minutes``, one_time needs ``run_date``,\nweekly and biweekly need ``days_of_week`` (biweekly also ``anchor_date``), monthly needs\n``day_of_month``, yearly needs ``month`` and ``day_of_month``. Every type but cron and interval\nalso reads ``time_of_day``, local HH:mm or HH:mm:ss, defaulting to 09:00. ``days_of_week``\nholds UPPERCASE day names (MONDAY \u2026 SUNDAY). ``interval`` means \"every N periods\" for weekly,\nmonthly and month_end, and must be 1 for daily and biweekly \u2014 biweekly is already every second\nweek, counted from ``anchor_date``.\n\n``zone_id`` is REQUIRED on every type here, unlike the shared expression model it derives from, whose\ndefault is UTC. A schedule's timezone is what decides when it fires and which calendar day\nits relative date parameters resolve against, so silently defaulting it would re-time a\ncaller's schedule rather than refuse an incomplete one. The web-app BFF requires zoneId on\nthe same write for the same reason.\n\nField names are documented in snake_case, and every one is ALSO accepted in its camelCase\nspelling (``zoneId``, ``timeOfDay``, ``daysOfWeek``, \u2026), which is how a cadence read back from\na GET is spelled \u2014 the subclass's validation-alias generator covers the fields it inherits\nfrom the shared expression model, not only the ones it redeclares.",
+        "description": "A trigger's cadence and the timezone its local times are read in.\n\n``type`` is one of one_time, daily, weekly, monthly \u2014 exactly the cadences the workflow editor\ncan read and write without changing their meaning. It decides which other fields are required:\none_time needs ``run_date``, weekly needs ``days_of_week``, and monthly needs ``day_of_month``.\nEvery type reads ``time_of_day``, a local minute-precision ``HH:mm`` time defaulting to 09:00.\n``days_of_week`` holds UPPERCASE day names (MONDAY \u2026 SUNDAY). Recurrences are every one period;\nskipped-period, cron, interval, biweekly, month-end, and yearly schedules are refused until the\neditor can represent them.\n\n``zone_id`` is REQUIRED on every type here. The shared scheduler expression defaults to UTC,\nbut a schedule's timezone decides when it fires and which calendar day its relative date\nparameters resolve against, so silently defaulting it would re-time a caller's schedule rather\nthan refuse an incomplete one. The web-app BFF requires zoneId on the same write for the same\nreason.\n\nField names are documented in snake_case, and every one is ALSO accepted in its camelCase\nspelling (``zoneId``, ``timeOfDay``, ``daysOfWeek``, \u2026), which is how a supported cadence read\nback from a GET is spelled.",
         "properties": {
-          "anchor_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type biweekly, ignored otherwise. The local date, as YYYY-MM-DD, that the every-second-week count starts from.",
-            "title": "Anchor Date"
-          },
-          "cron_expression": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type cron, ignored otherwise. A 5-field standard cron expression (minute hour day-of-month month day-of-week) or a 6/7-field Quartz one (seconds first, optional trailing year); it is stored in the Quartz form.",
-            "title": "Cron Expression"
-          },
           "day_of_month": {
             "anyOf": [
               {
@@ -3436,11 +4451,11 @@
                 "type": "null"
               }
             ],
-            "description": "Required for types monthly and yearly, ignored otherwise. Day of the month, 1 to 31. Use type month_end rather than 31 for the last day of every month.",
+            "description": "Required for type monthly, ignored otherwise. Day of the month, 1 to 31.",
             "title": "Day Of Month"
           },
           "days_of_week": {
-            "description": "Required for types weekly and biweekly, ignored otherwise. UPPERCASE day names \u2014 MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY \u2014 one entry per day the schedule runs.",
+            "description": "Required for type weekly, ignored otherwise. UPPERCASE day names \u2014 MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY \u2014 one entry per day the schedule runs.",
             "items": {
               "enum": [
                 "MONDAY",
@@ -3456,41 +4471,12 @@
             "title": "Days Of Week",
             "type": "array"
           },
-          "every_minutes": {
-            "anyOf": [
-              {
-                "maximum": 1440.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type interval, ignored otherwise. Minutes between runs, 1 to 1440. Under 60 it must divide 60 evenly; 60 or more must be a whole number of hours, and over 60 must divide 1440 evenly.",
-            "title": "Every Minutes"
-          },
           "interval": {
+            "const": 1,
             "default": 1,
-            "description": "How many periods apart the runs are: every N weeks for weekly, every N months for monthly and month_end. Defaults to 1 (every period) and must be 1 for daily and biweekly \u2014 biweekly is already every second week, counted from anchor_date.",
-            "maximum": 12.0,
-            "minimum": 1.0,
+            "description": "Must be 1; the workflow editor does not support skipping recurrence periods.",
             "title": "Interval",
             "type": "integer"
-          },
-          "month": {
-            "anyOf": [
-              {
-                "maximum": 12.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type yearly, ignored otherwise. Month of the year, 1 to 12.",
-            "title": "Month"
           },
           "run_date": {
             "anyOf": [
@@ -3515,20 +4501,16 @@
               }
             ],
             "default": "09:00",
-            "description": "Local HH:mm or HH:mm:ss time",
+            "description": "Local minute-precision time for the cadence; use HH:mm. HH:mm:00 is accepted and normalized, but nonzero seconds are refused because the workflow editor cannot preserve them.",
             "title": "Time Of Day"
           },
           "type": {
+            "description": "Editor-supported cadence kind: one_time, daily, weekly, or monthly.",
             "enum": [
-              "cron",
-              "interval",
               "one_time",
               "daily",
               "weekly",
-              "biweekly",
-              "monthly",
-              "month_end",
-              "yearly"
+              "monthly"
             ],
             "title": "Type",
             "type": "string"
@@ -5032,7 +6014,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5218,7 +6202,7 @@
     },
     "/v1/connections/data/types": {
       "get": {
-        "description": "List every connector type and the exact ``config`` and ``secrets`` keys it accepts.\n\nRead this before creating a connection. Each field carries its API ``key``\n(what you send), the ``label`` the UI and validation errors use for it (so a\nrejection naming \"Database\" maps back to ``pg_db``), whether it is\n``required``, and an ``example`` where one helps. ``applies_when`` marks\nfields that only apply under a particular auth or mode choice.\n\nCredentials belong in ``secrets`` and are never returned by any response;\neverything listed under ``config`` is stored in the clear and readable back.\n\n``undocumented_types`` names connector types the product supports whose keys are\nnot published yet. They are creatable, but only through the app \u2014 this listing\nomits them rather than risk naming a key wrongly, which would send a caller down\na path that silently fails.",
+        "description": "List every connector type and the exact ``config`` and ``secrets`` keys it accepts.\n\nRead this before creating a connection. Each field carries its API ``key``\n(what you send), the ``label`` the UI and validation errors use for it (so a\nrejection naming \"Database\" maps back to ``pg_db``), whether it is\n``required``, and an ``example`` where one helps. ``applies_when`` marks\nfields that only apply under a particular auth or mode choice, while\n``required_when`` marks a condition that makes an otherwise optional field required.\n\nCredentials belong in ``secrets`` and are never returned by any response;\neverything listed under ``config`` is stored in the clear and readable back.\n\n``undocumented_types`` names connector types the product supports whose keys are\nnot published yet. They are creatable, but only through the app \u2014 this listing\nomits them rather than risk naming a key wrongly, which would send a caller down\na path that silently fails.",
         "operationId": "list_connector_types",
         "responses": {
           "200": {
@@ -6825,6 +7809,18 @@
               "title": "Sync Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Set confirm=true for DELETE_KEYS, REPLACE_SCOPES, or AUTHORITATIVE_SNAPSHOT because those modes may delete rows.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true for DELETE_KEYS, REPLACE_SCOPES, or AUTHORITATIVE_SNAPSHOT because those modes may delete rows.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -7275,7 +8271,7 @@
     },
     "/v1/grid/tables": {
       "post": {
-        "description": "Create a calculation table defined by a SELECT query. Creation is atomic: the table is removed if naming or query definition fails. The query becomes the table's defining expression; the table is not materialized yet. Materialize it with the materialize route once created.",
+        "description": "Create a grid table. Two kinds, chosen with kind:\n\nkind=calc (the default) creates a calculation table defined by a SELECT query. The query becomes the table's defining expression; the table is not materialized yet. Materialize it with the materialize route once created.\n\nkind=data creates an empty appendable data table from a column schema, for callers that own their own rows (app state, operator logs). The table is promoted on creation, so the id it returns accepts row appends immediately via POST /v1/tables/{table_id}/rows. An integer s_id primary key and a _sm_created_at timestamp are added automatically; s_id is caller-supplied on every append, not auto-generated. Use this rather than POST /v1/table-imports, which loads a table from an uploaded file and produces an import table that does not accept appends.\n\nCreation is atomic for both kinds: the table is removed if naming, the defining query, or any column fails.",
         "operationId": "create_grid_table",
         "requestBody": {
           "content": {
@@ -7374,7 +8370,7 @@
             ]
           }
         ],
-        "summary": "Create calculation table",
+        "summary": "Create grid table",
         "tags": [
           "Grid"
         ]
@@ -11869,7 +12865,7 @@
     },
     "/v1/query-executions": {
       "post": {
-        "description": "Execute read-only SQL and return rows synchronously.\n\nQueries are structurally bounded: every statement is wrapped as a\n``SELECT`` with a row ``limit`` (default 100, max 10000) \u2014 INSERT,\nUPDATE, and DELETE are rejected. Discover real table names first;\nnever guess.",
+        "description": "Execute read-only SQL and return rows synchronously.\n\nQueries are structurally bounded: every statement is wrapped as a\n``SELECT`` with a row ``limit`` (default 100, max 10000) \u2014 INSERT,\nUPDATE, and DELETE are rejected. Discover real table names first;\nnever guess.\n\nThe result carries two equivalent row representations. Set ``row_format``\nto ``rows`` or ``rows_with_column_order`` to receive only the one you read;\nthe default ``both`` preserves the historical response. Note that ``rows``\ncamelCases the column names themselves, so ``order_id`` arrives as\n``orderId`` \u2014 use ``rows_with_column_order`` when the source names matter.",
         "operationId": "create_query_execution",
         "requestBody": {
           "content": {
@@ -12122,7 +13118,7 @@
         ]
       },
       "post": {
-        "description": "Create a schedule for a supported Summation resource. Set kind to choose the target type and request schema. The first supported kind is playbook. When workflows are enabled for the organization, scheduling new work belongs to workflows: this operation refuses, and you create a workflow with a schedule trigger through POST /v1/workflows instead. Existing schedules stay listable and editable here either way.",
+        "description": "Create a schedule for a supported Summation resource. Set kind to choose the target type and request schema. The first supported kind is playbook. When workflows are enabled for the organization, scheduling new work belongs to workflows: this operation refuses, and you create a workflow with a schedule trigger through POST /v1/workflows instead. That surface accepts only one_time, daily, weekly, and monthly cadences recurring every one period; other new cadences are unavailable while workflows are enabled. Existing schedules stay listable and editable here either way.",
         "operationId": "create_schedule",
         "requestBody": {
           "content": {
@@ -15458,6 +16454,836 @@
         ]
       }
     },
+    "/v1/verification-tests": {
+      "get": {
+        "description": "List custom definitions for the effective target organization, with an optional\nsubject-family filter and a bounded public page.",
+        "operationId": "list_verification_tests",
+        "parameters": [
+          {
+            "description": "Optional artifact family filter.",
+            "in": "query",
+            "name": "subject_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "html",
+                    "document",
+                    "deck",
+                    "workbook"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional artifact family filter.",
+              "title": "Subject Type"
+            }
+          },
+          {
+            "description": "Maximum definitions to return (1-100).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Maximum definitions to return (1-100).",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationTestDefinitionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List custom verification tests",
+        "tags": [
+          "Verification Tests"
+        ]
+      },
+      "post": {
+        "description": "Validate and create declarative custom-test definitions for an organization.",
+        "operationId": "create_verification_tests",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomTestBundle"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationTestUploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Create custom verification tests",
+        "tags": [
+          "Verification Tests"
+        ]
+      }
+    },
+    "/v1/verification-tests/attachments": {
+      "get": {
+        "description": "List active raw attachments, including ids used by the detach operation.",
+        "operationId": "list_verification_test_attachments",
+        "parameters": [
+          {
+            "description": "Overlay scope: tenant, project, or artifact.",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "description": "Overlay scope: tenant, project, or artifact.",
+              "enum": [
+                "tenant",
+                "project",
+                "artifact"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Artifact family whose verification tests are selected.",
+            "in": "query",
+            "name": "subject_type",
+            "required": true,
+            "schema": {
+              "description": "Artifact family whose verification tests are selected.",
+              "enum": [
+                "html",
+                "document",
+                "deck",
+                "workbook"
+              ],
+              "title": "Subject Type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+            "in": "query",
+            "name": "scope_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+              "title": "Scope Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationTestAttachmentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List verification-test overlays",
+        "tags": [
+          "Verification Tests"
+        ]
+      },
+      "post": {
+        "description": "Create an add or removal overlay. Creating an op=remove overlay requires confirm=true.",
+        "operationId": "create_verification_test_attachment",
+        "parameters": [
+          {
+            "description": "Set confirm=true when op=remove suppresses a resolved test ref.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true when op=remove suppresses a resolved test ref.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerificationTestAttachmentCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationTestAttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Create verification-test overlay",
+        "tags": [
+          "Verification Tests"
+        ]
+      }
+    },
+    "/v1/verification-tests/attachments/{attachment_id}": {
+      "delete": {
+        "description": "Soft-detach one attachment from its authorized scope. This removes the overlay row; it is distinct from creating an op=remove overlay, which suppresses a resolved test ref. Requires confirm=true.",
+        "operationId": "detach_verification_test_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Overlay scope: tenant, project, or artifact.",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "description": "Overlay scope: tenant, project, or artifact.",
+              "enum": [
+                "tenant",
+                "project",
+                "artifact"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+            "in": "query",
+            "name": "scope_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+              "title": "Scope Id"
+            }
+          },
+          {
+            "description": "Set confirm=true to detach this attachment. Required.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true to detach this attachment. Required.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationTestAttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Detach verification-test overlay",
+        "tags": [
+          "Verification Tests"
+        ]
+      }
+    },
+    "/v1/verification-tests/effective": {
+      "get": {
+        "description": "Resolve the complete inherited test set and provenance for one scope.",
+        "operationId": "preview_effective_verification_tests",
+        "parameters": [
+          {
+            "description": "Overlay scope: tenant, project, or artifact.",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "description": "Overlay scope: tenant, project, or artifact.",
+              "enum": [
+                "tenant",
+                "project",
+                "artifact"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Artifact family whose verification tests are selected.",
+            "in": "query",
+            "name": "subject_type",
+            "required": true,
+            "schema": {
+              "description": "Artifact family whose verification tests are selected.",
+              "enum": [
+                "html",
+                "document",
+                "deck",
+                "workbook"
+              ],
+              "title": "Subject Type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+            "in": "query",
+            "name": "scope_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project or artifact id. Omit for tenant scope, which derives the authenticated organization.",
+              "title": "Scope Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveVerificationTestsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "Preview effective verification tests",
+        "tags": [
+          "Verification Tests"
+        ]
+      }
+    },
     "/v1/views": {
       "get": {
         "description": "List saved views, optionally filtered to the views built on one table.",
@@ -16517,7 +18343,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -16874,7 +18700,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17014,7 +18840,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17304,7 +19130,7 @@
                 }
               }
             },
-            "description": "The workflow changed since the revision you read, its format cannot be edited through this API, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
+            "description": "The workflow changed since the revision you read, the update asked to make it active (which only the activate operation can do), or the request_id was already used. Nothing was applied."
           },
           "422": {
             "content": {
@@ -17696,6 +19522,10 @@
     {
       "description": "Workflows: what they run, when they run, and where their output is delivered.",
       "name": "Workflows"
+    },
+    {
+      "description": "Administrative custom verification-test definitions, overlays, and effective-set previews.",
+      "name": "Verification Tests"
     }
   ]
 }
