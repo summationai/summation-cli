@@ -1,6 +1,6 @@
 # GENERATED FILE - DO NOT EDIT.
 # ruff: noqa: E501
-# Source: summationai/Code@84a4a66226e301dcdef3f70bd12c97cc785e3bef:python/libs/sm_verification_contract/custom_test_bundle.py
+# Source: summationai/Code@e90f287bfaea4faefea2a1bcf9a5f045b9995e61:python/libs/sm_verification_contract/custom_test_bundle.py
 # Regenerate: python scripts/vendor_verification_contract.py --code-root PATH
 
 """The custom-test upload bundle contract — the single source shared by the server and the CLI.

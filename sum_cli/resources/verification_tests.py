@@ -315,7 +315,7 @@ def _attachment_body(
         if not custom_test_id:
             invalid_request(
                 "An add overlay requires --custom-test-id.",
-                "Pass --op add --custom-test-id VTD_ID and omit --target-ref.",
+                "Pass --op add --custom-test-id CVT_ID and omit --target-ref.",
             )
         if target_ref:
             invalid_request(
@@ -472,6 +472,13 @@ def attach(
     custom_test_id: Annotated[str | None, typer.Option("--custom-test-id")] = None,
     target_ref: Annotated[str | None, typer.Option("--target-ref")] = None,
     target_org: TargetOrgOption = None,
+    confirm: Annotated[
+        bool,
+        typer.Option(
+            "--confirm",
+            help="Confirm an --op remove overlay, which suppresses a resolved test for the scope.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Validate and emit the exact request; send nothing.")
     ] = False,
@@ -493,6 +500,10 @@ def attach(
         custom_test_id=custom_test_id,
         target_ref=target_ref,
     )
+    # The API requires confirm=true for a removal overlay because it suppresses a
+    # test that currently runs for the scope. Add overlays are not gated.
+    remove = op is AttachmentOperation.remove
+    request_kwargs: dict[str, Any] = {"params": {"confirm": True}} if remove else {}
     if dry_run:
         emit(
             ok(
@@ -503,17 +514,21 @@ def attach(
                         "/v1/verification-tests/attachments",
                         body=body,
                         target_org=target_org,
+                        **request_kwargs,
                     ),
                 }
             )
         )
         return
+    if remove:
+        require_confirm(confirm, action_name="verification-tests attach")
     with api_client(ctx, profile) as client:
         response = client.request(
             "POST",
             "/v1/verification-tests/attachments",
             json=body,
             headers=_target_headers(target_org),
+            **request_kwargs,
         )
     attachment = _required_dict(response, expected="created verification-test attachment")
     emit(

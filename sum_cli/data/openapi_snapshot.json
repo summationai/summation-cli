@@ -332,6 +332,18 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "snapshotUpperId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional fixed numeric source-id ceiling for an authoritative snapshot sweep.",
+            "title": "Snapshotupperid"
           }
         },
         "required": [
@@ -1474,7 +1486,7 @@
           },
           "schedule": {
             "$ref": "#/components/schemas/ScheduleExpression",
-            "description": "Schedule cadence and timezone."
+            "description": "Schedule cadence and timezone. When workflows are enabled, only one_time, daily, weekly, and monthly cadences recurring every one period can instead be created through /v1/workflows; other new cadences are unavailable."
           },
           "target": {
             "$ref": "#/components/schemas/PlaybookScheduleTargetRequest"
@@ -2042,6 +2054,19 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "snapshotUpperId": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional fixed numeric source-id ceiling for an authoritative snapshot sweep.",
+            "title": "Snapshotupperid"
           }
         },
         "required": [
@@ -2082,7 +2107,14 @@
       "SourcePagePublic": {
         "properties": {
           "committed_checkpoint": {
-            "$ref": "#/components/schemas/SourceCheckpoint"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "completed_at": {
             "anyOf": [
@@ -2132,9 +2164,32 @@
             "title": "Id",
             "type": "string"
           },
+          "mutation_mode": {
+            "default": "UPSERT",
+            "enum": [
+              "UPSERT",
+              "DELETE_KEYS",
+              "REPLACE_SCOPES",
+              "AUTHORITATIVE_SNAPSHOT"
+            ],
+            "title": "Mutation Mode",
+            "type": "string"
+          },
           "row_count": {
+            "description": "Submitted destination-record count; zero is valid for an empty parent scope.",
             "title": "Row Count",
             "type": "integer"
+          },
+          "rows_deleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Deleted"
           },
           "rows_inserted": {
             "anyOf": [
@@ -2169,6 +2224,12 @@
             ],
             "title": "Rows Updated"
           },
+          "scope_count": {
+            "default": 0,
+            "description": "Number of complete parent scopes reconciled by this page.",
+            "title": "Scope Count",
+            "type": "integer"
+          },
           "status": {
             "description": "CREATING, COMMITTING, and RUNNING are non-terminal; SUCCEEDED and FAILED are terminal.",
             "enum": [
@@ -2201,7 +2262,6 @@
           "id",
           "sync_id",
           "status",
-          "committed_checkpoint",
           "row_count"
         ],
         "title": "SourcePagePublic",
@@ -2222,10 +2282,211 @@
       "SourcePageSubmitRequest": {
         "additionalProperties": false,
         "description": "One bounded NetSuite REST page and its authoritative check-and-set cursor.",
+        "oneOf": [
+          {
+            "properties": {
+              "mutation_mode": {
+                "enum": [
+                  "UPSERT"
+                ]
+              },
+              "records": {
+                "maxItems": 1000
+              }
+            },
+            "required": [
+              "expected_checkpoint",
+              "next_checkpoint"
+            ],
+            "title": "Scheduled UPSERT page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "DELETE_KEYS"
+              },
+              "record_cursors": {
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              "records": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "expected_checkpoint",
+              "next_checkpoint",
+              "records",
+              "record_cursors"
+            ],
+            "title": "Scheduled DELETE_KEYS page"
+          },
+          {
+            "properties": {
+              "expected_checkpoint": {
+                "type": "null"
+              },
+              "mutation_mode": {
+                "const": "DELETE_KEYS"
+              },
+              "next_checkpoint": {
+                "type": "null"
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "sync_generation",
+              "records"
+            ],
+            "title": "Checkpoint-independent DELETE_KEYS page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "REPLACE_SCOPES"
+              },
+              "reconcile_scopes": {
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 5000
+              },
+              "scope_columns": {
+                "maxItems": 8,
+                "minItems": 1
+              },
+              "scope_cursors": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "expected_checkpoint",
+              "next_checkpoint",
+              "scope_columns",
+              "reconcile_scopes",
+              "scope_cursors"
+            ],
+            "title": "Scheduled scoped REPLACE_SCOPES page"
+          },
+          {
+            "properties": {
+              "expected_checkpoint": {
+                "type": "null"
+              },
+              "mutation_mode": {
+                "const": "REPLACE_SCOPES"
+              },
+              "next_checkpoint": {
+                "type": "null"
+              },
+              "reconcile_scopes": {
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 0
+              },
+              "scope_columns": {
+                "maxItems": 8,
+                "minItems": 1
+              },
+              "scope_cursors": {
+                "maxItems": 0
+              },
+              "tombstone_scopes": {
+                "maxItems": 1000,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "sync_generation",
+              "scope_columns",
+              "reconcile_scopes",
+              "tombstone_scopes"
+            ],
+            "title": "Checkpoint-independent REPLACE_SCOPES page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "REPLACE_SCOPES"
+              },
+              "reconcile_scopes": {
+                "maxItems": 0
+              },
+              "record_cursors": {
+                "maxItems": 0
+              },
+              "records": {
+                "maxItems": 0
+              },
+              "scope_columns": {
+                "maxItems": 0
+              },
+              "scope_cursors": {
+                "maxItems": 0
+              },
+              "tombstone_scopes": {
+                "maxItems": 0
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "expected_checkpoint",
+              "next_checkpoint"
+            ],
+            "title": "Scheduled terminal REPLACE_SCOPES page"
+          },
+          {
+            "properties": {
+              "mutation_mode": {
+                "const": "AUTHORITATIVE_SNAPSHOT"
+              },
+              "records": {
+                "maxItems": 1000
+              }
+            },
+            "required": [
+              "mutation_mode",
+              "sync_generation",
+              "expected_checkpoint",
+              "next_checkpoint",
+              "snapshot_complete",
+              "source_snapshot_upper_id"
+            ],
+            "title": "Authoritative snapshot page"
+          }
+        ],
         "properties": {
           "expected_checkpoint": {
-            "$ref": "#/components/schemas/SourceCheckpoint",
-            "description": "Checkpoint that must currently be committed for this sync."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Checkpoint that must currently be committed for a scheduled source page."
           },
           "idempotency_key": {
             "description": "Stable caller-generated key for this exact source page; reuse it after timeouts.",
@@ -2234,21 +2495,31 @@
             "title": "Idempotency Key",
             "type": "string"
           },
+          "mutation_mode": {
+            "default": "UPSERT",
+            "description": "UPSERT applies complete records, DELETE_KEYS removes records by business key, REPLACE_SCOPES atomically replaces declared parent scopes, and AUTHORITATIVE_SNAPSHOT accumulates keyset pages before the page marked snapshot_complete removes every absent destination key.",
+            "enum": [
+              "UPSERT",
+              "DELETE_KEYS",
+              "REPLACE_SCOPES",
+              "AUTHORITATIVE_SNAPSHOT"
+            ],
+            "title": "Mutation Mode",
+            "type": "string"
+          },
           "next_checkpoint": {
-            "$ref": "#/components/schemas/SourceCheckpoint",
-            "description": "Checkpoint committed only after every record in this page applies successfully."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Checkpoint committed only after every record in a scheduled page applies successfully."
           },
-          "record_cursors": {
-            "description": "One ordered NetSuite (lastmodifieddate, id) tuple for each record. The service verifies that the terminal tuple exactly equals next_checkpoint before it can advance the durable cursor. May be omitted only when records is empty or omitted.",
-            "items": {
-              "$ref": "#/components/schemas/SourceRecordCursor"
-            },
-            "maxItems": 1000,
-            "title": "Record Cursors",
-            "type": "array"
-          },
-          "records": {
-            "description": "Up to 1,000 JSON objects containing strings, integers, booleans, or null. Decimal values must be encoded as strings. Nullable columns may be omitted. An empty or omitted list is reserved for the checkpoint-only transition from an empty bounded backfill to incremental mode.",
+          "reconcile_scopes": {
+            "description": "Complete parent scopes to reconcile, including scopes with no current child records.",
             "items": {
               "additionalProperties": {
                 "anyOf": [
@@ -2269,14 +2540,128 @@
               "type": "object"
             },
             "maxItems": 1000,
+            "title": "Reconcile Scopes",
+            "type": "array"
+          },
+          "record_cursors": {
+            "description": "One ordered NetSuite (lastmodifieddate, id) tuple for each record. The service verifies that the terminal tuple exactly equals next_checkpoint before it can advance the durable cursor. May be omitted only when records is empty or omitted.",
+            "items": {
+              "$ref": "#/components/schemas/SourceRecordCursor"
+            },
+            "maxItems": 1000,
+            "title": "Record Cursors",
+            "type": "array"
+          },
+          "records": {
+            "description": "JSON objects containing strings, integers, booleans, or null: up to 1,000 for UPSERT/DELETE_KEYS and 5,000 for REPLACE_SCOPES. Decimal values must be encoded as strings. Nullable columns may be omitted. An empty or omitted list is reserved for a checkpoint-only backfill transition or deleted parent scope.",
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
             "title": "Records",
+            "type": "array"
+          },
+          "scope_columns": {
+            "description": "Business-key prefix identifying a complete parent scope for REPLACE_SCOPES.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Scope Columns",
+            "type": "array"
+          },
+          "scope_cursors": {
+            "description": "One ordered source cursor per reconcile scope; the final cursor must equal next_checkpoint.",
+            "items": {
+              "$ref": "#/components/schemas/SourceRecordCursor"
+            },
+            "maxItems": 1000,
+            "title": "Scope Cursors",
+            "type": "array"
+          },
+          "snapshot_complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required final-page proof for AUTHORITATIVE_SNAPSHOT; omitted for every other mutation mode.",
+            "title": "Snapshot Complete"
+          },
+          "source_snapshot_upper_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^-?\\d+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required fixed maximum source id captured by an AUTHORITATIVE_SNAPSHOT's first SuiteQL query; omitted for every other mutation mode.",
+            "title": "Source Snapshot Upper Id"
+          },
+          "sync_generation": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable recipe-generation binding. Required for checkpoint-independent DELETE_KEYS and REPLACE_SCOPES requests and rejected if it is not the sync's current generation.",
+            "title": "Sync Generation"
+          },
+          "tombstone_scopes": {
+            "description": "Subset of reconcile_scopes whose parent was deleted. These delete-wins markers prevent a late parent snapshot from resurrecting children.",
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "maxItems": 1000,
+            "title": "Tombstone Scopes",
             "type": "array"
           }
         },
         "required": [
-          "idempotency_key",
-          "expected_checkpoint",
-          "next_checkpoint"
+          "idempotency_key"
         ],
         "title": "SourcePageSubmitRequest",
         "type": "object"
@@ -3765,7 +4150,7 @@
         "type": "object"
       },
       "WorkflowSchedule": {
-        "description": "A trigger's cadence, field for field invertible into a WorkflowTriggerSchedule.\n\nThis is the read half of the same object the write half accepts: every field present here\nis one ``WorkflowTriggerSchedule`` takes, holding a value it accepts, so a caller can GET a\nworkflow, hand a trigger's ``schedule`` straight back on a PUT, and get the schedule it\nalready had. ``zoneId`` lives HERE rather than on the trigger for exactly that reason \u2014 the\nwrite model carries the timezone inside the schedule, and a projection that put it one\nlevel up would drop the timezone on every round trip that copied the schedule across.",
+        "description": "A trigger's stored cadence, including legacy shapes that are now read-only.\n\nEditor-supported cadences are field-for-field invertible into ``WorkflowTriggerSchedule``.\nBroader scheduler cadences remain visible so existing workflows can be diagnosed, but a write\nmust replace them with an editor-supported shape. ``zoneId`` lives HERE rather than on the\ntrigger because the write model carries the timezone inside the schedule; putting it one level\nup would drop the timezone on every supported round trip that copied the schedule across.",
         "properties": {
           "anchorDate": {
             "anyOf": [
@@ -3862,7 +4247,7 @@
             "title": "Timeofday"
           },
           "type": {
-            "description": "Cadence kind: cron, interval, one_time, daily, weekly, biweekly, monthly, or month_end.",
+            "description": "Stored cadence kind. Writes accept one_time, daily, weekly, and monthly; existing workflows may read as cron, interval, biweekly, or month_end until their cadence is replaced.",
             "title": "Type",
             "type": "string"
           },
@@ -4006,7 +4391,7 @@
       },
       "WorkflowTriggerRequest": {
         "additionalProperties": false,
-        "description": "One schedule trigger on a workflow.\n\nTriggers are a full replace-set on every write: a workflow's triggers are exactly the\nones the request carries, and any it omits are deleted along with their backing schedule.\nEcho the ``id`` of a trigger you are keeping so its stored settings survive the write.\n\nA trigger read back from a GET is field for field a trigger this model takes, in either\nspelling, so a caller can hand one straight back on a write.",
+        "description": "One schedule trigger on a workflow.\n\nTriggers are a full replace-set on every write: a workflow's triggers are exactly the\nones the request carries, and any it omits are deleted along with their backing schedule.\nEcho the ``id`` of a trigger you are keeping so its stored settings survive the write.\n\nAn editor-supported trigger read back from a GET is field for field a trigger this model takes,\nin either spelling, so a caller can hand it straight back on a write. Broader legacy scheduler\nshapes remain readable but must be replaced before this API will write the workflow.",
         "properties": {
           "enabled": {
             "default": true,
@@ -4053,33 +4438,8 @@
       },
       "WorkflowTriggerSchedule": {
         "additionalProperties": false,
-        "description": "A trigger's cadence and the timezone its local times are read in.\n\n``type`` is one of cron, interval, one_time, daily, weekly, biweekly, monthly, month_end,\nyearly, and it decides which other fields are required: cron needs ``cron_expression`` (5-field\nstandard or 6/7-field Quartz), interval needs ``every_minutes``, one_time needs ``run_date``,\nweekly and biweekly need ``days_of_week`` (biweekly also ``anchor_date``), monthly needs\n``day_of_month``, yearly needs ``month`` and ``day_of_month``. Every type but cron and interval\nalso reads ``time_of_day``, local HH:mm or HH:mm:ss, defaulting to 09:00. ``days_of_week``\nholds UPPERCASE day names (MONDAY \u2026 SUNDAY). ``interval`` means \"every N periods\" for weekly,\nmonthly and month_end, and must be 1 for daily and biweekly \u2014 biweekly is already every second\nweek, counted from ``anchor_date``.\n\n``zone_id`` is REQUIRED on every type here, unlike the shared expression model it derives from, whose\ndefault is UTC. A schedule's timezone is what decides when it fires and which calendar day\nits relative date parameters resolve against, so silently defaulting it would re-time a\ncaller's schedule rather than refuse an incomplete one. The web-app BFF requires zoneId on\nthe same write for the same reason.\n\nField names are documented in snake_case, and every one is ALSO accepted in its camelCase\nspelling (``zoneId``, ``timeOfDay``, ``daysOfWeek``, \u2026), which is how a cadence read back from\na GET is spelled \u2014 the subclass's validation-alias generator covers the fields it inherits\nfrom the shared expression model, not only the ones it redeclares.",
+        "description": "A trigger's cadence and the timezone its local times are read in.\n\n``type`` is one of one_time, daily, weekly, monthly \u2014 exactly the cadences the workflow editor\ncan read and write without changing their meaning. It decides which other fields are required:\none_time needs ``run_date``, weekly needs ``days_of_week``, and monthly needs ``day_of_month``.\nEvery type reads ``time_of_day``, a local minute-precision ``HH:mm`` time defaulting to 09:00.\n``days_of_week`` holds UPPERCASE day names (MONDAY \u2026 SUNDAY). Recurrences are every one period;\nskipped-period, cron, interval, biweekly, month-end, and yearly schedules are refused until the\neditor can represent them.\n\n``zone_id`` is REQUIRED on every type here. The shared scheduler expression defaults to UTC,\nbut a schedule's timezone decides when it fires and which calendar day its relative date\nparameters resolve against, so silently defaulting it would re-time a caller's schedule rather\nthan refuse an incomplete one. The web-app BFF requires zoneId on the same write for the same\nreason.\n\nField names are documented in snake_case, and every one is ALSO accepted in its camelCase\nspelling (``zoneId``, ``timeOfDay``, ``daysOfWeek``, \u2026), which is how a supported cadence read\nback from a GET is spelled.",
         "properties": {
-          "anchor_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type biweekly, ignored otherwise. The local date, as YYYY-MM-DD, that the every-second-week count starts from.",
-            "title": "Anchor Date"
-          },
-          "cron_expression": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type cron, ignored otherwise. A 5-field standard cron expression (minute hour day-of-month month day-of-week) or a 6/7-field Quartz one (seconds first, optional trailing year); it is stored in the Quartz form.",
-            "title": "Cron Expression"
-          },
           "day_of_month": {
             "anyOf": [
               {
@@ -4091,11 +4451,11 @@
                 "type": "null"
               }
             ],
-            "description": "Required for types monthly and yearly, ignored otherwise. Day of the month, 1 to 31. Use type month_end rather than 31 for the last day of every month.",
+            "description": "Required for type monthly, ignored otherwise. Day of the month, 1 to 31.",
             "title": "Day Of Month"
           },
           "days_of_week": {
-            "description": "Required for types weekly and biweekly, ignored otherwise. UPPERCASE day names \u2014 MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY \u2014 one entry per day the schedule runs.",
+            "description": "Required for type weekly, ignored otherwise. UPPERCASE day names \u2014 MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY \u2014 one entry per day the schedule runs.",
             "items": {
               "enum": [
                 "MONDAY",
@@ -4111,41 +4471,12 @@
             "title": "Days Of Week",
             "type": "array"
           },
-          "every_minutes": {
-            "anyOf": [
-              {
-                "maximum": 1440.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type interval, ignored otherwise. Minutes between runs, 1 to 1440. Under 60 it must divide 60 evenly; 60 or more must be a whole number of hours, and over 60 must divide 1440 evenly.",
-            "title": "Every Minutes"
-          },
           "interval": {
+            "const": 1,
             "default": 1,
-            "description": "How many periods apart the runs are: every N weeks for weekly, every N months for monthly and month_end. Defaults to 1 (every period) and must be 1 for daily and biweekly \u2014 biweekly is already every second week, counted from anchor_date.",
-            "maximum": 12.0,
-            "minimum": 1.0,
+            "description": "Must be 1; the workflow editor does not support skipping recurrence periods.",
             "title": "Interval",
             "type": "integer"
-          },
-          "month": {
-            "anyOf": [
-              {
-                "maximum": 12.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Required for type yearly, ignored otherwise. Month of the year, 1 to 12.",
-            "title": "Month"
           },
           "run_date": {
             "anyOf": [
@@ -4170,20 +4501,16 @@
               }
             ],
             "default": "09:00",
-            "description": "Local HH:mm or HH:mm:ss time",
+            "description": "Local minute-precision time for the cadence; use HH:mm. HH:mm:00 is accepted and normalized, but nonzero seconds are refused because the workflow editor cannot preserve them.",
             "title": "Time Of Day"
           },
           "type": {
+            "description": "Editor-supported cadence kind: one_time, daily, weekly, or monthly.",
             "enum": [
-              "cron",
-              "interval",
               "one_time",
               "daily",
               "weekly",
-              "biweekly",
-              "monthly",
-              "month_end",
-              "yearly"
+              "monthly"
             ],
             "title": "Type",
             "type": "string"
@@ -4383,7 +4710,10 @@
       "SummationMachineAuth": {
         "flows": {
           "clientCredentials": {
-            "scopes": {},
+            "scopes": {
+              "agent:read": "agent:read",
+              "agent:write": "agent:write"
+            },
             "tokenUrl": "/v1/auth/m2m/token"
           }
         },
@@ -5872,7 +6202,7 @@
     },
     "/v1/connections/data/types": {
       "get": {
-        "description": "List every connector type and the exact ``config`` and ``secrets`` keys it accepts.\n\nRead this before creating a connection. Each field carries its API ``key``\n(what you send), the ``label`` the UI and validation errors use for it (so a\nrejection naming \"Database\" maps back to ``pg_db``), whether it is\n``required``, and an ``example`` where one helps. ``applies_when`` marks\nfields that only apply under a particular auth or mode choice.\n\nCredentials belong in ``secrets`` and are never returned by any response;\neverything listed under ``config`` is stored in the clear and readable back.\n\n``undocumented_types`` names connector types the product supports whose keys are\nnot published yet. They are creatable, but only through the app \u2014 this listing\nomits them rather than risk naming a key wrongly, which would send a caller down\na path that silently fails.",
+        "description": "List every connector type and the exact ``config`` and ``secrets`` keys it accepts.\n\nRead this before creating a connection. Each field carries its API ``key``\n(what you send), the ``label`` the UI and validation errors use for it (so a\nrejection naming \"Database\" maps back to ``pg_db``), whether it is\n``required``, and an ``example`` where one helps. ``applies_when`` marks\nfields that only apply under a particular auth or mode choice, while\n``required_when`` marks a condition that makes an otherwise optional field required.\n\nCredentials belong in ``secrets`` and are never returned by any response;\neverything listed under ``config`` is stored in the clear and readable back.\n\n``undocumented_types`` names connector types the product supports whose keys are\nnot published yet. They are creatable, but only through the app \u2014 this listing\nomits them rather than risk naming a key wrongly, which would send a caller down\na path that silently fails.",
         "operationId": "list_connector_types",
         "responses": {
           "200": {
@@ -7478,6 +7808,18 @@
               "minLength": 1,
               "title": "Sync Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Set confirm=true for DELETE_KEYS, REPLACE_SCOPES, or AUTHORITATIVE_SNAPSHOT because those modes may delete rows.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true for DELETE_KEYS, REPLACE_SCOPES, or AUTHORITATIVE_SNAPSHOT because those modes may delete rows.",
+              "title": "Confirm",
+              "type": "boolean"
             }
           }
         ],
@@ -12776,7 +13118,7 @@
         ]
       },
       "post": {
-        "description": "Create a schedule for a supported Summation resource. Set kind to choose the target type and request schema. The first supported kind is playbook. When workflows are enabled for the organization, scheduling new work belongs to workflows: this operation refuses, and you create a workflow with a schedule trigger through POST /v1/workflows instead. Existing schedules stay listable and editable here either way.",
+        "description": "Create a schedule for a supported Summation resource. Set kind to choose the target type and request schema. The first supported kind is playbook. When workflows are enabled for the organization, scheduling new work belongs to workflows: this operation refuses, and you create a workflow with a schedule trigger through POST /v1/workflows instead. That surface accepts only one_time, daily, weekly, and monthly cadences recurring every one period; other new cadences are unavailable while workflows are enabled. Existing schedules stay listable and editable here either way.",
         "operationId": "create_schedule",
         "requestBody": {
           "content": {
@@ -16511,8 +16853,22 @@
         ]
       },
       "post": {
-        "description": "Create either an add overlay or a removal overlay at one supported scope.",
+        "description": "Create an add or removal overlay. Creating an op=remove overlay requires confirm=true.",
         "operationId": "create_verification_test_attachment",
+        "parameters": [
+          {
+            "description": "Set confirm=true when op=remove suppresses a resolved test ref.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true when op=remove suppresses a resolved test ref.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {

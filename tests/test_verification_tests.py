@@ -179,7 +179,7 @@ def test_upload_maps_public_request_and_target_org(
             "data": {
                 "created": [
                     {
-                        "id": "vtd-1",
+                        "id": "cvt-1",
                         "testId": "brand_color",
                         "displayName": "Brand Color Compliance",
                         "requiredness": "advisory",
@@ -210,7 +210,7 @@ def test_upload_maps_public_request_and_target_org(
         headers={"x-agent-proxy-target-org": "org-customer"},
     )
     payload = json.loads(result.stdout)
-    assert payload["result"]["created"][0]["id"] == "vtd-1"
+    assert payload["result"]["created"][0]["id"] == "cvt-1"
     assert payload["next_actions"]
 
 
@@ -268,7 +268,7 @@ def test_list_maps_filters_count_and_public_envelope(monkeypatch: pytest.MonkeyP
     client = _mock_client(
         monkeypatch,
         {
-            "data": [{"id": "vtd-1", "testId": "brand_color"}],
+            "data": [{"id": "cvt-1", "testId": "brand_color"}],
             "showing": 1,
             "total": 3,
             "truncated": True,
@@ -298,7 +298,7 @@ def test_list_maps_filters_count_and_public_envelope(monkeypatch: pytest.MonkeyP
     )
     payload = json.loads(result.stdout)["result"]
     assert payload == {
-        "tests": [{"id": "vtd-1", "testId": "brand_color"}],
+        "tests": [{"id": "cvt-1", "testId": "brand_color"}],
         "showing": 1,
         "total": 3,
         "truncated": True,
@@ -306,53 +306,55 @@ def test_list_maps_filters_count_and_public_envelope(monkeypatch: pytest.MonkeyP
     }
 
 
+_ATTACH_BASE = [
+    "verification-tests",
+    "attach",
+    "--scope",
+    "project",
+    "--project",
+    "prj-1",
+    "--subject-type",
+    "deck",
+]
+_REMOVE_ARGS = ["--op", "remove", "--target-ref", "deck_rubric:readability"]
+_REMOVE_BODY = {
+    "scope": "project",
+    "scope_id": "prj-1",
+    "subject_type": "deck",
+    "op": "remove",
+    "target_ref": "deck_rubric:readability",
+}
+
+
 @pytest.mark.parametrize(
-    ("args", "expected_body"),
+    ("args", "expected_body", "expected_kwargs"),
     [
         (
-            ["--op", "add", "--custom-test-id", "vtd-1"],
+            ["--op", "add", "--custom-test-id", "cvt-1"],
             {
                 "scope": "project",
                 "scope_id": "prj-1",
                 "subject_type": "deck",
                 "op": "add",
-                "custom_test_id": "vtd-1",
+                "custom_test_id": "cvt-1",
             },
+            {},
         ),
-        (
-            ["--op", "remove", "--target-ref", "deck_rubric:readability"],
-            {
-                "scope": "project",
-                "scope_id": "prj-1",
-                "subject_type": "deck",
-                "op": "remove",
-                "target_ref": "deck_rubric:readability",
-            },
-        ),
+        # The API refuses op=remove without confirm=true (it suppresses a running test),
+        # so the CLI gates it behind --confirm and sends the query param.
+        ([*_REMOVE_ARGS, "--confirm"], _REMOVE_BODY, {"params": {"confirm": True}}),
     ],
 )
 def test_attach_keeps_add_and_remove_overlays_distinct(
     monkeypatch: pytest.MonkeyPatch,
     args: list[str],
     expected_body: dict[str, str],
+    expected_kwargs: dict[str, object],
 ) -> None:
     _api_env(monkeypatch)
     client = _mock_client(monkeypatch, {"data": {"id": "vta-1", "status": "active"}})
 
-    result = runner.invoke(
-        app,
-        [
-            "verification-tests",
-            "attach",
-            "--scope",
-            "project",
-            "--project",
-            "prj-1",
-            "--subject-type",
-            "deck",
-            *args,
-        ],
-    )
+    result = runner.invoke(app, [*_ATTACH_BASE, *args])
 
     assert result.exit_code == 0, result.stdout
     client.request.assert_called_once_with(
@@ -360,7 +362,36 @@ def test_attach_keeps_add_and_remove_overlays_distinct(
         "/v1/verification-tests/attachments",
         json=expected_body,
         headers=None,
+        **expected_kwargs,
     )
+
+
+def test_attach_remove_requires_confirm_but_dry_run_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _api_env(monkeypatch)
+    client = _mock_client(monkeypatch, {"data": {"id": "vta-1", "status": "active"}})
+
+    refused = runner.invoke(app, [*_ATTACH_BASE, *_REMOVE_ARGS])
+    assert refused.exit_code == 1, refused.stdout
+    assert json.loads(refused.stdout)["error"]["code"] == "CONFIRM_REQUIRED"
+    assert "verification-tests attach" in refused.stdout
+    client.request.assert_not_called()
+
+    dry = runner.invoke(app, [*_ATTACH_BASE, *_REMOVE_ARGS, "--dry-run"])
+    assert dry.exit_code == 0, dry.stdout
+    request = json.loads(dry.stdout)["result"]["request"]
+    assert request["method"] == "POST"
+    assert request["path"] == "/v1/verification-tests/attachments"
+    assert request["query"] == {"confirm": True}
+    assert request["body"] == _REMOVE_BODY
+    client.request.assert_not_called()
+
+    add_without_confirm = runner.invoke(
+        app, [*_ATTACH_BASE, "--op", "add", "--custom-test-id", "cvt-1"]
+    )
+    assert add_without_confirm.exit_code == 0, add_without_confirm.stdout
+    assert "params" not in client.request.call_args.kwargs
 
 
 def test_attach_project_uses_profile_default_but_cross_org_requires_explicit_project(
@@ -390,7 +421,7 @@ def test_attach_project_uses_profile_default_but_cross_org_requires_explicit_pro
         "--op",
         "add",
         "--custom-test-id",
-        "vtd-1",
+        "cvt-1",
     ]
 
     same_org = runner.invoke(app, common)
@@ -443,7 +474,7 @@ def test_attach_project_uses_the_action_profile_default(
             "--op",
             "add",
             "--custom-test-id",
-            "vtd-1",
+            "cvt-1",
             "--profile",
             "customer",
         ],
@@ -480,7 +511,7 @@ def test_scope_flag_mismatches_fail_before_network(
             "--op",
             "add",
             "--custom-test-id",
-            "vtd-1",
+            "cvt-1",
         ],
     )
 
@@ -577,7 +608,7 @@ def test_scoped_commands_apply_target_org_to_every_request(
             "--op",
             "add",
             "--custom-test-id",
-            "vtd-1",
+            "cvt-1",
             *target,
         ],
     )
@@ -794,7 +825,7 @@ def test_attach_dry_run_validates_operation_and_never_authenticates(
             "--op",
             "add",
             "--custom-test-id",
-            "vtd-1",
+            "cvt-1",
         ],
         [
             "attach",
