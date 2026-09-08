@@ -1,0 +1,10 @@
+version: custom-test-bundle/v1
+subject_type: deck
+tests:
+  - test_id: brand_color
+    category: Visual
+    name: Brand color
+    display_name: Brand Color Compliance
+    pass_criteria: PASS if the approved brand palette is used.
+    requiredness: advisory
+    render_dependent: false

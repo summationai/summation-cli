@@ -43,6 +43,7 @@ from sum_cli.resources import (
     schedules,
     tables,
     tenant,
+    verification_tests,
     views,
     workflows,
 )
@@ -83,6 +84,7 @@ app.add_typer(tables.app, name="tables")
 app.add_typer(views.app, name="views")
 app.add_typer(grid.app, name="grid")
 app.add_typer(queries.app, name="queries")
+app.add_typer(verification_tests.app, name="verification-tests")
 
 apply_openapi_help(app)
 
@@ -136,7 +138,8 @@ def _api_error_guidance(*, status: int, code: str, message: str) -> tuple[str, l
                 action("Show config", "sumcli config active"),
                 action(
                     "Update credentials",
-                    "sumcli config set-profile <name> --client-id <id> --client-secret <secret> --login",
+                    "sumcli config set-profile <name> --client-id <id> "
+                    "--client-secret <secret> --login",
                     params={
                         "name": param("Profile name"),
                         "id": param("M2M client id"),
@@ -227,7 +230,10 @@ def _root(
     ctx.obj = CliContext(
         profile=profile, base_url=base_url, verbose=verbose, intent=resolve_intent(intent)
     )
-    if ctx.invoked_subcommand != "update":
+    # Verification bundle validation and mutation dry-runs are deliberately
+    # network-free. Skip the opportunistic PyPI update check for this resource
+    # so that promise applies to the complete invocation, not only its API call.
+    if ctx.invoked_subcommand not in {"update", "verification-tests"}:
         warn_if_outdated()
     if ctx.invoked_subcommand is None:
         try:
@@ -237,7 +243,8 @@ def _root(
                 err(
                     "OPENAPI_SPEC_MISSING",
                     str(exc),
-                    "Reinstall summation-cli (pipx install --force …) or run from a source checkout.",
+                    "Reinstall summation-cli (pipx install --force …) or run from a "
+                    "source checkout.",
                     next_actions=[action("Show version", "sumcli --version")],
                 )
             )
@@ -261,7 +268,8 @@ def main() -> None:
             err(
                 "AUTH_ERROR",
                 str(e),
-                "Configure a profile, then run sumcli auth login. Use sumcli auth login --m2m for machine credentials.",
+                "Configure a profile, then run sumcli auth login. Use sumcli auth login "
+                "--m2m for machine credentials.",
                 next_actions=[
                     action("Show config", "sumcli config active"),
                     action(
