@@ -15,8 +15,18 @@
 # One-time setup (PyPI Trusted Publisher):
 #   Owner: summationai  Repo: summation-cli
 #   Workflow: release.yml  Environment: pypi
-# Then create a GitHub Environment named "pypi" and add required reviewers —
-# that approval is the last human gate before a publish.
+# Then create a GitHub Environment named "pypi" and add required reviewers.
+# That approval is the last human gate before a publish.
+#
+# One-time setup (SUM-6166 companion dispatch): install the GitHub App backed by
+# TS_PROTO_GEN_APP_ID / TS_PROTO_GEN_APP_KEY for summationai/code, grant it
+# Actions: write on that repository, and define TS_PROTO_GEN_APP_ID as an Actions
+# variable plus TS_PROTO_GEN_APP_KEY as an Actions secret available to this repo.
+# The monorepo sumcli-pin-bump.yaml workflow must already be merged to
+# summationai/code main before this CLI hook is merged. The dispatch job must
+# fail rather than silently skip if those prerequisites are missing. Manual
+# recovery after a publish:
+#   gh workflow run sumcli-pin-bump.yaml -R summationai/code -f version=X.Y.Z
 name: Release
 
 on:
@@ -146,3 +156,37 @@ jobs:
           else
             gh release create "${tag}" --title "${title}" --generate-notes dist/*
           fi
+
+  dispatch-sumcli-pin-bump:
+    # SUM-6166: after PyPI publish succeeds, immediately ask the monorepo to
+    # open/update the agent-vm pin bump PR for this exact release version.
+    needs: [test-and-build, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create cross-repo GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.TS_PROTO_GEN_APP_ID }}
+          private-key: ${{ secrets.TS_PROTO_GEN_APP_KEY }}
+          owner: summationai
+          repositories: code
+          permission-actions: write
+
+      - name: Dispatch monorepo sumcli pin bump
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.test-and-build.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="$VERSION"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Refusing to dispatch invalid summation-cli version '$version'" >&2
+            exit 1
+          fi
+          if [ "$TAG" != "v${version}" ]; then
+            echo "Release tag $TAG does not match validated version $version" >&2
+            exit 1
+          fi
+          gh workflow run sumcli-pin-bump.yaml --repo summationai/code --ref main --field "version=$version"

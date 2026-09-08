@@ -106,7 +106,8 @@ Merging without a version bump does not publish anything. To ship:
    ```
 3. `.github/workflows/release.yml` re-runs tests, checks the tag matches
    `__version__`, builds, publishes to PyPI via Trusted Publishing (OIDC),
-   and creates a GitHub Release with the wheel/sdist.
+   creates a GitHub Release with the wheel/sdist, then dispatches the monorepo
+   `sumcli-pin-bump.yaml` workflow for the exact published version.
 
 The tagged commit must be on `main`. A `v*` tag can point at any commit, so the
 workflow also checks that the commit is an ancestor of `origin/main` and fails
@@ -114,8 +115,22 @@ if it is not. Tag after the version bump merges, not before.
 
 One-time setup: add a PyPI Trusted Publisher for this repo
 (`workflow: release.yml`, `environment: pypi`) and create a GitHub Environment
-named `pypi`. Add required reviewers to that environment — the approval is the
+named `pypi`. Add required reviewers to that environment; the approval is the
 last human gate before a publish.
+
+One-time setup for the SUM-6166 companion dispatch: install the GitHub App backed
+by `TS_PROTO_GEN_APP_ID` / `TS_PROTO_GEN_APP_KEY` with access to
+`summationai/code`, grant it **Actions: write** on that repository, and define
+`TS_PROTO_GEN_APP_ID` as an Actions variable plus `TS_PROTO_GEN_APP_KEY` as an
+Actions secret available to this repo. The monorepo `sumcli-pin-bump.yaml`
+workflow must already be merged to `summationai/code` `main` before this CLI
+hook is merged, or the dispatch target will not exist. The dispatch job must
+fail rather than silently skip if those prerequisites are missing. Manual
+recovery after a successful publish:
+
+```bash
+gh workflow run sumcli-pin-bump.yaml -R summationai/code -f version=X.Y.Z
+```
 
 Local/emergency publishes (and TestPyPI dry runs) still work with
 `./scripts/publish.sh`:
