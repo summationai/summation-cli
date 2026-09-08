@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from sum_cli.cli.main import app
@@ -892,4 +893,4 @@ def test_verification_tests_help_distinguishes_remove_overlay_from_detach() -> N
     assert group.exit_code == attach.exit_code == detach.exit_code == 0
     assert "removal overlay" in attach.stdout.lower()
     assert "attachment" in detach.stdout.lower()
-    assert "--confirm" in detach.stdout
+    assert "--confirm" in unstyle(detach.stdout)
