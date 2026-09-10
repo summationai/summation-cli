@@ -19,7 +19,12 @@ from sum_cli.config_store import (
     update_profile_field,
     write_all,
 )
-from sum_cli.constants import ACTIVE_PROFILE_KEY, META_SECTION, SECRET_KEYS
+from sum_cli.constants import (
+    ACTIVE_PROFILE_KEY,
+    DEVICE_LOGIN_CREDENTIAL_KEY,
+    META_SECTION,
+    SECRET_KEYS,
+)
 from sum_cli.env_import import (
     EnvImportError,
     parse_env_file,
@@ -254,6 +259,17 @@ def clear_project(ctx: typer.Context, profile: ProfileOption = None) -> None:
     )
 
 
+def _auth_credential_kind(section: dict[str, str]) -> str | None:
+    """Name the credential `sumcli` will authenticate with, in acquire_token order."""
+    if section.get(DEVICE_LOGIN_CREDENTIAL_KEY):
+        return DEVICE_LOGIN_CREDENTIAL_KEY
+    if section.get("access_token"):
+        return "access_token"
+    if section.get("client_id") and section.get("client_secret"):
+        return "m2m_client_credentials"
+    return None
+
+
 @app.command("set-profile")
 def set_profile(
     name: Annotated[str, typer.Argument()],
@@ -262,6 +278,16 @@ def set_profile(
     client_secret: Annotated[str | None, typer.Option("--client-secret", hide_input=True)] = None,
     default_project: Annotated[str | None, typer.Option("--default-project")] = None,
     m2m_scope: Annotated[str | None, typer.Option("--m2m-scope")] = None,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace",
+            help=(
+                "Write the profile from these flags only, discarding every other stored "
+                "field, including any credential. Without it the profile is merged."
+            ),
+        ),
+    ] = False,
     login: Annotated[
         bool,
         typer.Option(
@@ -285,16 +311,28 @@ def set_profile(
 
     path = config_path()
     data = read_all(path)
-    section: dict[str, str] = {
+    existing = dict(data.get(name) or {})
+    updates: dict[str, str] = {
         "base_url": _normalize_base_url(base_url),
     }
     if normalized_client_id and normalized_client_secret:
-        section["client_id"] = normalized_client_id
-        section["client_secret"] = normalized_client_secret
+        updates["client_id"] = normalized_client_id
+        updates["client_secret"] = normalized_client_secret
     if default_project:
-        section["default_project"] = default_project
+        updates["default_project"] = default_project
     if m2m_scope:
-        section["m2m_scope"] = m2m_scope
+        updates["m2m_scope"] = m2m_scope
+
+    # Merge by default: a profile can hold a live sign-in (device_login_credential or
+    # access_token) that no flag names, and replacing the section wholesale signs the
+    # machine out without saying so. --replace is the opt-in for the old behaviour.
+    if replace:
+        section = dict(updates)
+    else:
+        section = {**existing, **updates}
+    kept = sorted(key for key in existing if key in section and key not in updates)
+    changed = sorted(key for key, value in updates.items() if existing.get(key) != value)
+    discarded = sorted(key for key in existing if key not in section)
     data[name] = section
     write_all(path, data)
 
@@ -328,7 +366,11 @@ def set_profile(
         action("Activate profile", f"sumcli config use {name}"),
         action("Whoami", f"sumcli --profile {name} auth whoami"),
     ]
-    if login_result is None:
+    # Read the section back: an M2M login above may have persisted an access_token.
+    final_section = read_all(path).get(name) or data[name]
+    stored_credential = _auth_credential_kind(final_section)
+    already_signed_in = stored_credential in (DEVICE_LOGIN_CREDENTIAL_KEY, "access_token")
+    if login_result is None and not already_signed_in:
         next_actions.insert(0, login_action)
 
     emit(
@@ -338,6 +380,12 @@ def set_profile(
                 "path": str(path),
                 "has_m2m_credentials": has_m2m_credentials,
                 "login": login_result,
+                "created": not existing,
+                "merged": bool(existing) and not replace,
+                "kept": kept,
+                "changed": changed,
+                "discarded": discarded,
+                "auth_will_use": stored_credential,
             },
             next_actions=next_actions,
         )
