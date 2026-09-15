@@ -106,9 +106,18 @@ def checked_intent(ctx: typer.Context) -> str | None:
     return intent
 
 
+def client_timeout(ctx: typer.Context) -> float | None:
+    obj = getattr(ctx, "obj", None)
+    return getattr(obj, "timeout", None)
+
+
 @contextmanager
 def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
-    client = Client(cfg=get_config(ctx, profile), intent=checked_intent(ctx))
+    client = Client(
+        cfg=get_config(ctx, profile),
+        intent=checked_intent(ctx),
+        timeout=client_timeout(ctx),
+    )
     try:
         yield client
     finally:

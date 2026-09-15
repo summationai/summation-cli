@@ -543,7 +543,7 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_INTENT` (org kill switch: never send `X-Summation-Intent`), `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_INTENT` (org kill switch: never send `X-Summation-Intent`), `SUMCLI_TIMEOUT` (sum-api HTTP timeout seconds, default 120; same as `--timeout`), `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
 
 Read by the Summation plugin, not this CLI: `SUMCLI_NO_AUTO_INSTALL` (SessionStart auto-install opt-out).
 

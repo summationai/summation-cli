@@ -56,6 +56,7 @@ class CliContext:
     base_url: str | None
     verbose: bool = False
     intent: str | None = None
+    timeout: float | None = None
 
     def config(self, *, profile: str | None = None) -> Config:
         return load(profile=profile or self.profile, base_url=self.base_url)
@@ -219,6 +220,14 @@ def _root(
         "without it a run cannot be joined to a goal, and sumcli warns on "
         'stderr. Example: --intent "convert my weekly recap".',
     ),
+    timeout: float | None = typer.Option(  # noqa: B008
+        None,
+        "--timeout",
+        envvar="SUMCLI_TIMEOUT",
+        help="HTTP timeout in seconds for sum-api calls (default 120). "
+        "Place before the subcommand. grid create / tables upsert often "
+        "need more than 30s; a timeout is not proof the write failed.",
+    ),
 ) -> None:
     debug_log.set_verbose(verbose)
     # `output` is resolved by its eager callback (_output_callback) before this body
@@ -228,7 +237,11 @@ def _root(
     # point a command actually calls sum-api — this callback also runs for
     # discovery and --help, which must never be refused.
     ctx.obj = CliContext(
-        profile=profile, base_url=base_url, verbose=verbose, intent=resolve_intent(intent)
+        profile=profile,
+        base_url=base_url,
+        verbose=verbose,
+        intent=resolve_intent(intent),
+        timeout=timeout,
     )
     # Verification bundle validation and mutation dry-runs are deliberately
     # network-free. Skip the opportunistic PyPI update check for this resource
@@ -288,6 +301,20 @@ def main() -> None:
         if e.method and e.url:
             debug_log.log_api_error(e.status, e.body, method=e.method, url=e.url)
         emit_error(_api_error_envelope(e))
+    except httpx.TimeoutException as e:
+        emit_error(
+            err(
+                "NETWORK_ERROR",
+                str(e),
+                "The request exceeded the HTTP timeout. The server may still have "
+                "accepted the write — re-list or re-query before retrying. Raise "
+                "the limit with --timeout or SUMCLI_TIMEOUT (default 120s).",
+                next_actions=[
+                    action("Show config", "sumcli config active"),
+                    action("Show version", "sumcli --version"),
+                ],
+            )
+        )
     except httpx.HTTPError as e:
         emit_error(
             err(

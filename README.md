@@ -442,6 +442,7 @@ Explicit `--project` always wins. When both file and env set a default, **the fi
 | `SUM_API_M2M_SCOPE` | Optional scope on M2M token request |
 | `SUMCLI_INTENT` | Default `--intent` (human's request, their words when possible) |
 | `SUMCLI_NO_INTENT` | Do not send `X-Summation-Intent`, even if `--intent` / `SUMCLI_INTENT` is set |
+| `SUMCLI_TIMEOUT` | HTTP timeout in seconds for sum-api calls (default 120). Same as `--timeout`. |
 | `SHAREPOINT_TENANT_ID` | Azure AD tenant for SharePoint app-only auth |
 | `SHAREPOINT_CLIENT_ID` | SharePoint app client id (falls back to `CLIENT_ID`) |
 | `SHAREPOINT_CLIENT_SECRET` | SharePoint app secret (falls back to `CLIENT_SECRET`) |
