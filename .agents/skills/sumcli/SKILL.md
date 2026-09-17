@@ -529,22 +529,35 @@ sumcli chats cancel --chat chat-... --message msg-... --confirm
 **Best practices**
 
 1. **Treat `queued` as pending, never as done.** A `queued` status event and heartbeats
-   are progress. If the stream ends while the message is still waiting, the CLI exits
-   **1** with `QUEUE_INCOMPLETE` and `error.data.queuedMessageId` — resume with
-   `chats queue-show`, do not re-send. Re-sending without the original
-   `--idempotency-key` enqueues a second copy.
-2. **Keep the queued message ID.** `chats reply` puts it in `result.queued_message`.
+   are progress. Any interrupted wait — clean EOF *or* a transport error such as a read
+   timeout — exits **1**, never `ok: true`.
+2. **Never recover by re-sending with a fresh key.** That asks Addison the same question
+   twice. `chats reply` reports the key it used at
+   `result.queued_message.idempotency_key` and in `error.data.idempotencyKey`; replay
+   *that* key, or poll `chats queue-show`. This is the one rule that costs real money to
+   get wrong.
+3. **Read the terminal code before recovering.** `QUEUE_INCOMPLETE` — never started:
+   `queue-show` or `queue-withdraw` it. `QUEUE_STREAM_INCOMPLETE` — started but
+   unfinished: `error.data.messageId` is bound, the partial answer is in
+   `error.data.text`, and `chats events --message` resumes it (withdrawing 409s).
+   `STREAM_INCOMPLETE` — accepted (or possibly accepted), then the stream died before
+   any terminal, queued or not: replay `error.data.idempotencyKey`. A sum-api 5xx on a
+   keyed send carries the same field and the same advice; a 4xx is a refusal that did
+   not land. `REPLY_CANCELLED` / `REPLY_ERROR` — the
+   server's `done` said the turn did not complete; the text you have is partial.
+4. **Keep the queued message ID.** `chats reply` puts it in `result.queued_message`.
    Before the turn dispatches there is no assistant message ID, so the receipt is the
    only handle on that work.
-3. **A finished queued message still answers `queue-show`.** It can dispatch and finish
+5. **A finished queued message still answers `queue-show`.** It can dispatch and finish
    before you poll; the receipt then carries `messageId`, and `chats events --message`
    replays the reply. Absence of a stream is not a lost answer.
-4. **`chats cancel` holds the queue; it does not drain it.** Waiting messages survive the
+6. **`chats cancel` holds the queue; it does not drain it.** Waiting messages survive the
    Stop (`queueHeld: true`) and only start again after `chats queue-resume`. Do not read
-   a held queue as a stuck one.
-5. **`queue-show` exits 1 for `withdrawn` and `failed`.** Same convention as
-   `tables import-status`. Read `error.data.failure_code` before deciding to re-send.
-6. **`--no-wait` does not detach from a queued send.** Both wait modes drain the stream,
+   a held queue as a stuck one. `cancel` exits 1 on `not_found` — nothing was stopped, so
+   do not send the next turn assuming the old one is dead; `already_complete` is success.
+7. **`queue-show` exits 1 for `withdrawn` and `failed`.** Same convention as
+   `tables import-status`. Read `error.data.failureCode` before deciding to re-send.
+8. **`--no-wait` does not detach from a queued send.** Both wait modes drain the stream,
    so the command stays attached until the message runs or the server's 30-minute
    observation cap fires a recoverable `queue_wait_timeout`. For fire-and-forget, send
    with an idempotency key, let it time out, and poll `queue-show`.
@@ -570,7 +583,7 @@ sumcli chats feedback --chat chat-... --message msg-... --rating thumbs_down \
 5. **Pick the narrowest `--reason`.** Reach for `other` only when nothing else fits, and then `--details` is mandatory to be useful at all.
 6. **Do not put secrets, PII, or raw customer rows in `--details`.** It is stored and read by humans. Describe the defect, do not paste the data.
 
-**Getting the IDs.** `chats create` and `chats reply` return `messageId` in the terminal payload. They do **not** return the chat ID. The emitted "Reply" next action shows `chat-id: null`. Recover the chat ID with `chats list`:
+**Getting the IDs.** `chats create` and `chats reply` return `messageId` at `result.message.payload.messageId` (`result.chat.payload.messageId` for `create`), and the assistant text at `.text`. Before the queue release both sat one level deeper, under the raw `{type,sequence,data}` SSE envelope, and `.text` was always empty; the CLI now unwraps that envelope. Re-read the ID path if you are pinned to an older sumcli. They do **not** return the chat ID. The emitted "Reply" next action shows `chat-id: null`. Recover the chat ID with `chats list`:
 
 ```bash
 CHAT=$(sumcli chats list --count 1 | jq -r '.result.chats[0].id')

@@ -57,6 +57,14 @@ class FeedbackReason(str, Enum):
     other = "other"
 
 
+def _reply_result(payload: dict, text: str, queue_state: QueueObservation) -> dict:
+    """Terminal result for a chat send, carrying the queue receipt when it waited."""
+    result: dict[str, Any] = {"text": text, "payload": payload}
+    if queue_state.waiting:
+        result["queued_message"] = queue_state.as_result()
+    return result
+
+
 def _msg_body(message: str, title: str | None = None) -> dict:
     body: dict = {"message": message}
     if title:
@@ -130,6 +138,7 @@ def create_chat(
             follow=follow,
             json=payload,
             result_builder=lambda p, t: {"text": t, "payload": p},
+            require_terminal=True,
         )
         if outcome.streamed:
             return
@@ -200,8 +209,12 @@ def reply_chat(
     # One key per invocation, generated before the request goes out, so a retry of
     # *this* run (or a re-run with the key echoed back) resumes the same message
     # rather than enqueueing a duplicate. An explicit key recovers a previous run.
-    payload["idempotency_key"] = idempotency_key or uuid.uuid4().hex
-    queue_state = QueueObservation()
+    key = idempotency_key or uuid.uuid4().hex
+    payload["idempotency_key"] = key
+    # The observation carries the key so an interrupted wait can print it. A caller
+    # that never saw the generated key cannot replay it, and re-sending without it
+    # enqueues the same question twice — which is the whole point of the key.
+    queue_state = QueueObservation(idempotency_key=key)
     with api_client(ctx, profile) as c:
         outcome = post_with_wait_follow(
             c,
@@ -210,19 +223,24 @@ def reply_chat(
             wait=wait,
             follow=follow,
             json=payload,
-            result_builder=lambda p, t: {"text": t, "payload": p},
+            # The receipt goes through the builder, not just the envelope below, so
+            # it reaches the NDJSON terminal under --follow too — the docs point
+            # agents at result.queued_message.idempotency_key in both modes.
+            result_builder=lambda p, t: _reply_result(p, t, queue_state),
             queue_state=queue_state,
+            require_terminal=True,
         )
         if outcome.streamed:
             return
         body = outcome.body
     result = unwrap_data(body or {}, "data") or body
+    queued = result.pop("queued_message", None) if isinstance(result, dict) else None
     envelope: dict[str, Any] = {"message": result, "project_id": pid}
     next_actions: list = []
-    if queue_state.waiting:
+    if queued:
         # The send waited its turn. Report the receipt: it is the durable handle
         # for this message, and the only one if the stream is interrupted.
-        envelope["queued_message"] = queue_state.as_result()
+        envelope["queued_message"] = queued
         next_actions.append(
             action(
                 "Show queued message",
@@ -263,7 +281,12 @@ def stream_events(
     with api_client(ctx, profile) as c:
         with c.stream("GET", path) as resp:
             terminal = stream_sse_response(
-                resp, raw_sse=raw_sse, result_builder=lambda p, t: {"text": t}
+                resp,
+                raw_sse=raw_sse,
+                result_builder=lambda p, t: {"text": t},
+                # --raw-sse dumps bytes without parsing, so it has no terminal to
+                # require; the parsed path always ends in the route's done/error.
+                require_terminal=not raw_sse,
             )
         exit_if_stream_failed(terminal)
 
@@ -289,7 +312,7 @@ _QUEUE_FAILURE_EXITS = {
     "failed": (
         "QUEUED_MESSAGE_FAILED",
         "The queued message failed before it ran.",
-        "Read error.data.failure_detail, fix the cause, and send the message again.",
+        "Read error.data.failureDetail, fix the cause, and send the message again.",
     ),
     "withdrawn": (
         "QUEUED_MESSAGE_WITHDRAWN",
@@ -299,9 +322,37 @@ _QUEUE_FAILURE_EXITS = {
 }
 
 
-def _queue_item(body: object) -> dict:
-    item = unwrap_data(body or {}, "data")
-    return item if isinstance(item, dict) else {}
+def _queue_data(body: object, *, endpoint: str) -> dict:
+    """The ``data`` object from a queue response, refusing an unrecognized shape.
+
+    Normalizing a missing wrapper to ``{}`` would report an empty, unheld queue for
+    a response the CLI failed to read — the SUM-5882 failure mode ``extract_list``
+    exists to prevent. For a queue that is exactly how a caller ends up re-sending a
+    message that is already waiting, so this refuses instead.
+    """
+    data = unwrap_data(body or {}, "data")
+    if not isinstance(data, dict):
+        emit_error(
+            err(
+                "UNEXPECTED_SHAPE",
+                f"{endpoint} returned no readable 'data' object.",
+                "The API response shape changed. Upgrade sumcli, or report this with"
+                " sumcli --version output and the command you ran.",
+            )
+        )
+    return data
+
+
+def _queue_items(data: dict, key: str) -> list:
+    """Waiting messages from a queue payload.
+
+    The key is optional in the contract (it defaults to an empty list), so an absent
+    key on a payload whose sibling fields we did read is a genuine zero. Anything
+    else still goes through ``extract_list``, which refuses unrecognized shapes.
+    """
+    if key not in data and "revision" in data:
+        return []
+    return extract_list(data, key)
 
 
 def _resume_action(chat_id: str) -> dict:
@@ -323,9 +374,8 @@ def list_queue(
     pid = require_project(ctx, project)
     with api_client(ctx, profile) as c:
         body = c.request("GET", f"/v1/projects/{pid}/conversations/{chat_id}/queue")
-    data = unwrap_data(body or {}, "data")
-    data = data if isinstance(data, dict) else {}
-    listed = truncate_list(extract_list(data, "items"), count=count)
+    data = _queue_data(body, endpoint="queue-list")
+    listed = truncate_list(_queue_items(data, "items"), count=count)
     held = bool(data.get("held"))
     next_actions = [
         action(
@@ -370,7 +420,7 @@ def show_queued_message(
             "GET",
             f"/v1/projects/{pid}/conversations/{chat_id}/queue/{queued_message_id}",
         )
-    item = _queue_item(body)
+    item = _queue_data(body, endpoint="queue-show")
     state = str(item.get("state") or "")
     failure = _QUEUE_FAILURE_EXITS.get(state)
     if failure is not None:
@@ -380,11 +430,13 @@ def show_queued_message(
                 code,
                 item.get("failureDetail") or message,
                 fix,
+                # camelCase, matching the keys sum-api puts in a problem body and the
+                # ones the stream terminals use, so one generic reader works everywhere.
                 data={
-                    "queued_message_id": item.get("id") or queued_message_id,
+                    "queuedMessageId": item.get("id") or queued_message_id,
                     "state": state,
-                    "failure_code": item.get("failureCode"),
-                    "failure_detail": item.get("failureDetail"),
+                    "failureCode": item.get("failureCode"),
+                    "failureDetail": item.get("failureDetail"),
                 },
             )
         )
@@ -400,6 +452,20 @@ def show_queued_message(
                 params={
                     "chat-id": param("Chat ID", value=chat_id),
                     "message-id": param("Message ID", value=bound_message_id),
+                },
+            )
+        )
+    elif state in ("dispatching", "dispatched"):
+        # Claimed, but the binding is not in this projection yet (sum-api omits a
+        # null message id, and guards for dispatched-without-id itself). Withdrawal
+        # loses this race with a 409, so re-reading is the only useful next step.
+        next_actions.append(
+            action(
+                "Re-read the queued message",
+                "sumcli chats queue-show --chat <chat-id> --queued-message <queued-message-id>",
+                params={
+                    "chat-id": param("Chat ID", value=chat_id),
+                    "queued-message-id": param("Queued message ID", value=queued_message_id),
                 },
             )
         )
@@ -443,7 +509,7 @@ def withdraw_queued_message(
     emit(
         ok(
             {
-                "queued_message": _queue_item(body),
+                "queued_message": _queue_data(body, endpoint="queue-withdraw"),
                 "chat_id": chat_id,
                 "project_id": pid,
             },
@@ -468,15 +534,14 @@ def resume_queue(
     pid = require_project(ctx, project)
     with api_client(ctx, profile) as c:
         body = c.request("POST", f"/v1/projects/{pid}/conversations/{chat_id}/queue/resume")
-    data = unwrap_data(body or {}, "data")
-    data = data if isinstance(data, dict) else {}
+    data = _queue_data(body, endpoint="queue-resume")
     emit(
         ok(
             {
                 "held": bool(data.get("held")),
                 "revision": data.get("revision"),
                 "active_message_id": data.get("activeMessageId"),
-                "queued_messages": extract_list(data, "queuedTurns"),
+                "queued_messages": _queue_items(data, "queuedTurns"),
                 "chat_id": chat_id,
                 "project_id": pid,
             },
@@ -510,7 +575,20 @@ def cancel_reply(
             f"/v1/projects/{pid}/conversations/{chat_id}/messages/{message_id}/cancel",
             params=api_confirm_params(),
         )
-    result = _queue_item(body)
+    result = _queue_data(body, endpoint="chats cancel")
+    if result.get("status") == "not_found":
+        # Nothing was stopped. Reporting ok here lets an agent believe the turn is
+        # over and send the next message straight into the turn it thought it
+        # killed — the same reason queue-show exits non-zero on a non-answer.
+        emit_error(
+            err(
+                "CANCEL_TARGET_NOT_FOUND",
+                f"No in-progress reply for message {message_id} in this chat.",
+                "Check the message id with `sumcli chats show --chat <chat-id>`; the reply may "
+                "belong to a different chat, or may already be gone.",
+                data={"messageId": message_id, "status": "not_found"},
+            )
+        )
     next_actions = [
         action(
             "Show chat",

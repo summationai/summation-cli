@@ -134,7 +134,10 @@ def test_reply_reports_a_queued_message_id_in_the_envelope() -> None:
         assert isinstance(state, QueueObservation)
         state.queued_message_id = "qt_9"
         state.position = 1
-        return StreamPostResult(streamed=False, body={"messageId": "msg_2"})
+        # Drive the real result_builder: the receipt rides in the terminal result so
+        # that --follow's NDJSON carries it too, not just the non-streamed envelope.
+        assert result_builder is not None
+        return StreamPostResult(streamed=False, body=result_builder({"messageId": "msg_2"}, ""))
 
     mock_cm = MagicMock()
     mock_cm.__enter__.return_value = MagicMock()
@@ -249,7 +252,8 @@ def test_queue_show_of_a_failed_item_exits_nonzero_with_its_failure_code() -> No
     body = json.loads(result.stdout)
     assert body["ok"] is False
     assert body["error"]["code"] == "QUEUED_MESSAGE_FAILED"
-    assert body["error"]["data"]["failure_code"] == "attachment_deleted"
+    assert body["error"]["data"]["failureCode"] == "attachment_deleted"
+    assert body["error"]["data"]["queuedMessageId"] == "qt_1"
 
 
 def test_queue_show_of_a_withdrawn_item_exits_nonzero() -> None:
@@ -392,3 +396,420 @@ def test_cancel_posts_with_confirm_and_reports_the_hold() -> None:
     # A Stop holds the queue; the caller needs the way back.
     commands = [a["command"] for a in body["next_actions"]]
     assert any("queue-resume" in c for c in commands)
+
+
+# ---------------------------------------------------------------------------
+# Wire-shape regression: the real public SSE envelope, end to end.
+#
+# sum-api serializes every public event as {"type","sequence","data":{...}}
+# (sum_api/agent_client.py::public_agent_event, deployed today). Before this PR
+# the CLI read `text`/`messageId` off the envelope instead of its `data`, so an
+# immediate reply accumulated no text and surfaced the raw envelope as its
+# payload — contradicting the documented "returns messageId in the terminal
+# payload". These drive the command through httpx-shaped frames so a revert to
+# the flat read fails here, not only in the streaming unit tests.
+# ---------------------------------------------------------------------------
+
+
+def _wire_frame(event: str, data: dict, sequence: int) -> str:
+    body = json.dumps({"type": event, "sequence": sequence, "data": data})
+    return f"event: {event}\nid: {sequence}\ndata: {body}\n\n"
+
+
+def _reply_over_wire(args: list[str], frames: list[str]):
+    resp = MagicMock()
+    resp.iter_text.return_value = iter(frames)
+    stream_cm = MagicMock()
+    stream_cm.__enter__.return_value = resp
+    stream_cm.__exit__.return_value = None
+    client = MagicMock()
+    client.stream.return_value = stream_cm
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+    with patch("sum_cli.resources.chats.api_client", return_value=cm):
+        return runner.invoke(app, args), client
+
+
+def test_immediate_reply_reports_text_and_message_id_from_the_real_envelope() -> None:
+    result, client = _reply_over_wire(
+        _REPLY_ARGS,
+        [
+            _wire_frame("message.delta", {"text": "Q3 "}, 0),
+            _wire_frame("message.delta", {"text": "grew 4%."}, 1),
+            _wire_frame(
+                "done",
+                {"messageId": "msg_5", "chatId": "chat_1", "status": "complete"},
+                2,
+            ),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)
+    message = body["result"]["message"]
+    assert message["text"] == "Q3 grew 4%."
+    assert message["payload"]["messageId"] == "msg_5"
+    # An immediate reply never waited, so it must not claim a queue receipt.
+    assert "queued_message" not in body["result"]
+    # The body still carries the send options the queue contract needs.
+    assert client.stream.call_args.kwargs["json"]["on_busy"] == "queue"
+
+
+def test_queued_then_dispatched_reply_reports_both_receipt_and_answer() -> None:
+    """The full queued timeline: status, heartbeat, position advance, then the reply."""
+    result, _ = _reply_over_wire(
+        _REPLY_ARGS,
+        [
+            _wire_frame(
+                "status",
+                {
+                    "message": "queued",
+                    "position": 2,
+                    "behindMessageId": "msg_running",
+                    "queuedMessageId": "qt_11",
+                },
+                0,
+            ),
+            _wire_frame("heartbeat", {}, 1),
+            _wire_frame("queue.updated", {"position": 1, "queuedMessageId": "qt_11"}, 2),
+            _wire_frame("message.delta", {"text": "done waiting"}, 3),
+            _wire_frame("done", {"messageId": "msg_12", "status": "complete"}, 4),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)
+    assert body["result"]["queued_message"]["queued_message_id"] == "qt_11"
+    assert body["result"]["queued_message"]["position"] == 1
+    assert body["result"]["message"]["payload"]["messageId"] == "msg_12"
+    assert body["result"]["message"]["text"] == "done waiting"
+
+
+def test_reply_that_never_dispatches_fails_with_the_receipt() -> None:
+    result, _ = _reply_over_wire(
+        _REPLY_ARGS,
+        [
+            _wire_frame(
+                "status", {"message": "queued", "position": 1, "queuedMessageId": "qt_13"}, 0
+            ),
+            _wire_frame("heartbeat", {}, 1),
+        ],
+    )
+
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["ok"] is False
+    assert body["error"]["code"] == "QUEUE_INCOMPLETE"
+    assert body["error"]["data"]["queuedMessageId"] == "qt_13"
+
+
+# ---------------------------------------------------------------------------
+# Shape handling: a response the CLI could not read must never look like a
+# healthy empty queue (SUM-5882), but an optional-and-absent list key is a real
+# zero. Both matter here: "no waiting messages" is what a caller acts on when
+# deciding whether to send again.
+# ---------------------------------------------------------------------------
+
+
+def test_queue_list_refuses_a_response_with_no_data_object() -> None:
+    result, _ = _invoke(
+        ["chats", "queue-list", "--project", "proj_1", "--chat", "chat_1"],
+        {"queue": {"items": []}},
+    )
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "UNEXPECTED_SHAPE"
+
+
+def test_queue_list_treats_an_absent_items_key_as_an_empty_queue() -> None:
+    """`items` has a default in the contract, so absent-with-siblings is a real zero."""
+    result, _ = _invoke(
+        ["chats", "queue-list", "--project", "proj_1", "--chat", "chat_1"],
+        {"data": {"held": False, "revision": 3}},
+    )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)
+    assert body["result"]["queued_messages"] == []
+    assert body["result"]["revision"] == 3
+
+
+def test_queue_list_still_refuses_an_unrecognized_data_shape() -> None:
+    result, _ = _invoke(
+        ["chats", "queue-list", "--project", "proj_1", "--chat", "chat_1"],
+        {"data": {"messages": [_QUEUE_ITEM]}},
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "UNEXPECTED_SHAPE"
+
+
+def test_queue_resume_treats_an_absent_queued_turns_key_as_empty() -> None:
+    result, _ = _invoke(
+        ["chats", "queue-resume", "--project", "proj_1", "--chat", "chat_1"],
+        {"data": {"held": False, "revision": 4}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["result"]["queued_messages"] == []
+
+
+def test_queue_show_of_a_dispatching_item_does_not_offer_withdrawal() -> None:
+    """Withdrawal loses that race with a 409; re-reading is the only useful step."""
+    dispatching = {**_QUEUE_ITEM, "state": "dispatching", "messageId": None}
+    result, _ = _invoke(
+        [
+            "chats",
+            "queue-show",
+            "--project",
+            "proj_1",
+            "--chat",
+            "chat_1",
+            "--queued-message",
+            "qt_1",
+        ],
+        {"data": dispatching},
+    )
+    assert result.exit_code == 0, result.stdout
+    commands = [a["command"] for a in json.loads(result.stdout)["next_actions"]]
+    assert not any("queue-withdraw" in c for c in commands)
+    assert any("queue-show" in c for c in commands)
+
+
+def test_cancel_of_an_unknown_message_fails_instead_of_claiming_success() -> None:
+    """ok:true here lets an agent send the next turn into the reply it thought it killed."""
+    result, _ = _invoke(
+        [
+            "chats",
+            "cancel",
+            "--project",
+            "proj_1",
+            "--chat",
+            "chat_1",
+            "--message",
+            "msg_bogus",
+            "--confirm",
+        ],
+        {"data": {"messageId": "msg_bogus", "status": "not_found", "queueHeld": None}},
+    )
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "CANCEL_TARGET_NOT_FOUND"
+    assert body["error"]["data"]["messageId"] == "msg_bogus"
+
+
+def test_cancel_of_an_already_finished_reply_is_still_a_success() -> None:
+    """Idempotent: the reply is genuinely over, which is what the caller wanted."""
+    result, _ = _invoke(
+        [
+            "chats",
+            "cancel",
+            "--project",
+            "proj_1",
+            "--chat",
+            "chat_1",
+            "--message",
+            "msg_1",
+            "--confirm",
+        ],
+        {"data": {"messageId": "msg_1", "status": "already_complete", "queueHeld": False}},
+    )
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["result"]["cancel"]["status"] == "already_complete"
+
+
+def test_reply_reports_the_generated_idempotency_key_when_it_waits() -> None:
+    """Recovery means replaying the same key, so the caller has to be told it."""
+    result, _ = _reply_over_wire(
+        _REPLY_ARGS,
+        [
+            _wire_frame(
+                "status", {"message": "queued", "position": 1, "queuedMessageId": "qt_14"}, 0
+            ),
+            _wire_frame("done", {"messageId": "msg_15"}, 1),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    key = json.loads(result.stdout)["result"]["queued_message"]["idempotency_key"]
+    assert isinstance(key, str) and key
+
+
+def test_interrupted_queued_reply_prints_the_key_needed_to_resume_it() -> None:
+    result, _ = _reply_over_wire(
+        [*_REPLY_ARGS, "--idempotency-key", "send-99"],
+        [
+            _wire_frame(
+                "status", {"message": "queued", "position": 1, "queuedMessageId": "qt_16"}, 0
+            )
+        ],
+    )
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["data"]["idempotencyKey"] == "send-99"
+    assert "send-99" in body["fix"]
+
+
+def test_follow_mode_terminal_carries_the_queue_receipt() -> None:
+    """Docs point agents at result.queued_message.idempotency_key in BOTH modes."""
+    result, _ = _reply_over_wire(
+        [*_REPLY_ARGS, "--follow", "--idempotency-key", "send-55"],
+        [
+            _wire_frame(
+                "status", {"message": "queued", "position": 1, "queuedMessageId": "qt_20"}, 0
+            ),
+            _wire_frame("done", {"messageId": "msg_21", "status": "complete"}, 1),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    lines = [json.loads(line) for line in result.stdout.strip().split("\n")]
+    terminal = lines[-1]
+    assert terminal["type"] == "result"
+    receipt = terminal["result"]["queued_message"]
+    assert receipt["queued_message_id"] == "qt_20"
+    assert receipt["idempotency_key"] == "send-55"
+
+
+def test_reply_interrupted_before_any_receipt_reports_the_key() -> None:
+    """The POST was accepted; a plain re-run would ask Addison the same thing twice."""
+    result, _ = _reply_over_wire(
+        [*_REPLY_ARGS, "--idempotency-key", "send-56"],
+        [_wire_frame("message.delta", {"text": "started"}, 0)],
+    )
+
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "STREAM_INCOMPLETE"
+    assert body["error"]["data"]["idempotencyKey"] == "send-56"
+    assert body["error"]["data"]["text"] == "started"
+
+
+def test_reply_cancelled_mid_answer_does_not_report_success() -> None:
+    result, _ = _reply_over_wire(
+        _REPLY_ARGS,
+        [
+            _wire_frame("message.delta", {"text": "partial"}, 0),
+            _wire_frame("done", {"messageId": "msg_22", "status": "cancelled"}, 1),
+        ],
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "REPLY_CANCELLED"
+
+
+def test_reply_whose_stream_never_opens_reports_the_key_not_a_retry() -> None:
+    """The send may already have landed: sum-api accepts before it streams."""
+    import httpx
+
+    client = MagicMock()
+    client.stream.side_effect = httpx.ReadTimeout("timed out")
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+
+    with patch("sum_cli.resources.chats.api_client", return_value=cm):
+        result = runner.invoke(app, [*_REPLY_ARGS, "--idempotency-key", "send-78"])
+
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "STREAM_INCOMPLETE"
+    assert body["error"]["data"]["idempotencyKey"] == "send-78"
+    assert "may already have been accepted" in body["fix"]
+    assert "Check that you are online" not in body["fix"]
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_reply_unconfirmed_by_a_sum_api_5xx_reports_the_key(status: int) -> None:
+    """sum-api forwards the send, then fails to read the answer back.
+
+    The turn may already be durable, so the default "check auth whoami" guidance is
+    wrong twice over — and re-running would ask Addison the same question again.
+    """
+    from sum_cli.client import ApiError
+
+    client = MagicMock()
+    client.stream.side_effect = ApiError(
+        status, {"code": "timeout", "detail": "A product service timed out.", "status": status}
+    )
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+
+    with patch("sum_cli.resources.chats.api_client", return_value=cm):
+        result = runner.invoke(
+            app, [*_REPLY_ARGS, "--idempotency-key", "send-79"], standalone_mode=False
+        )
+
+    from sum_cli.cli.main import _api_error_envelope
+
+    envelope = _api_error_envelope(result.exception)
+    assert envelope["error"]["data"]["idempotencyKey"] == "send-79"
+    assert "send-79" in envelope["fix"]
+    assert "auth whoami" not in envelope["fix"]
+
+
+def test_reply_refused_with_4xx_keeps_the_generic_envelope() -> None:
+    """A 409/429 is a refusal: that send did not land, so no replay advice."""
+    from sum_cli.cli.main import _api_error_envelope
+    from sum_cli.client import ApiError
+
+    client = MagicMock()
+    client.stream.side_effect = ApiError(
+        409, {"code": "conversation_queue_full", "detail": "full", "limit": 5}
+    )
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+
+    with patch("sum_cli.resources.chats.api_client", return_value=cm):
+        result = runner.invoke(
+            app, [*_REPLY_ARGS, "--idempotency-key", "send-80"], standalone_mode=False
+        )
+
+    envelope = _api_error_envelope(result.exception)
+    assert "idempotencyKey" not in envelope["error"]["data"]
+    assert envelope["error"]["data"]["limit"] == 5
+    assert "queue-list" in envelope["fix"]
+
+
+def test_queue_show_of_a_dispatched_item_without_a_binding_does_not_offer_withdrawal() -> None:
+    """Transient: claimed, but the id is not in this projection yet. Withdrawal 409s."""
+    dispatched = {**_QUEUE_ITEM, "state": "dispatched", "messageId": None, "position": 0}
+    result, _ = _invoke(
+        [
+            "chats",
+            "queue-show",
+            "--project",
+            "proj_1",
+            "--chat",
+            "chat_1",
+            "--queued-message",
+            "qt_1",
+        ],
+        {"data": dispatched},
+    )
+    assert result.exit_code == 0, result.stdout
+    commands = [a["command"] for a in json.loads(result.stdout)["next_actions"]]
+    assert not any("queue-withdraw" in c for c in commands)
+
+
+def test_create_interrupted_after_the_post_does_not_advise_a_bare_retry() -> None:
+    """chats create has no idempotency key, but its stream always terminates.
+
+    A retry would buy a second chat and a second paid turn, so the unconfirmed
+    wording applies even without a key to replay.
+    """
+    import httpx
+
+    client = MagicMock()
+    client.stream.side_effect = httpx.ReadTimeout("timed out")
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = None
+
+    with patch("sum_cli.resources.chats.api_client", return_value=cm):
+        result = runner.invoke(
+            app, ["chats", "create", "--project", "proj_1", "-m", "hello"]
+        )
+
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "STREAM_INCOMPLETE"
+    assert "may already have been accepted" in body["fix"]

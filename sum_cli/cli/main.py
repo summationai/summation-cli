@@ -136,7 +136,7 @@ _QUEUE_ERROR_FIXES: dict[str, str] = {
     "conversation_busy": (
         "The chat is still answering error.data.activeMessageId. Re-send with "
         "--on-busy queue to wait your turn, or stop it with `sumcli chats cancel "
-        "--message <id> --confirm`."
+        "--chat <chat-id> --message <error.data.activeMessageId> --confirm`."
     ),
     "conversation_queue_full": (
         "The chat already has the maximum number of waiting messages. Inspect them with "
@@ -148,11 +148,11 @@ _QUEUE_ERROR_FIXES: dict[str, str] = {
     ),
     "queued_message_already_dispatched": (
         "The queued message already started, so it cannot be withdrawn. Read its reply "
-        "with `sumcli chats events --message <error.data.messageId>`."
+        "with `sumcli chats events --chat <chat-id> --message <error.data.messageId>`."
     ),
     "queued_message_dispatching": (
         "The queued message is starting right now. Re-read it with `sumcli chats "
-        "queue-show --chat <chat-id> --queued-message <id>` and retry."
+        "queue-show --chat <chat-id> --queued-message <queued-message-id>` and retry."
     ),
 }
 
@@ -230,7 +230,26 @@ def _api_error_guidance(*, status: int, code: str, message: str) -> tuple[str, l
 def _api_error_envelope(exc: ApiError) -> dict:
     code, message = _api_error_fields(exc.body)
     fix, next_actions = _api_error_guidance(status=exc.status, code=code, message=message)
-    return err(code, message, fix, next_actions=next_actions, data=_api_error_data(exc.body))
+    data = _api_error_data(exc.body)
+    if exc.idempotency_key:
+        # An unconfirmed send. The default guidance here points at credentials,
+        # which is wrong twice over: nothing is wrong with the credentials, and
+        # re-running the command would ask the same question a second time.
+        data = {**(data or {}), "idempotencyKey": exc.idempotency_key}
+        fix = (
+            f"sum-api could not confirm this send ({exc.status}); the message may already "
+            "have been accepted. Do not re-send with a new key — that asks the same "
+            f"question twice. Replay this one with --idempotency-key {exc.idempotency_key}, "
+            "or check `sumcli chats queue-list --chat <chat-id>` first."
+        )
+        next_actions = [
+            action(
+                "List queued messages",
+                "sumcli chats queue-list --chat <chat-id>",
+                params={"chat-id": param("Chat ID")},
+            )
+        ]
+    return err(code, message, fix, next_actions=next_actions, data=data)
 
 
 @app.callback(invoke_without_command=True)

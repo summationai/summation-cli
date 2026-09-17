@@ -596,13 +596,28 @@ so it requires `--confirm`) and **pauses** the backlog rather than draining it �
 the response reports `queueHeld: true`. Release it with `chats queue-resume`.
 
 **Waiting is not success.** `queued` status events and heartbeats are progress, not
-an answer. If the stream ends while the message is still waiting, the CLI emits a
-`QUEUE_INCOMPLETE` error terminal and **exit 1**, carrying `queuedMessageId` so you
-can pick the message back up with `chats queue-show`. Queue errors
-(`conversation_queue_full`, `conversation_queue_held`, `queue_wait_timeout`,
-`queued_message_already_dispatched`, …) likewise exit non-zero with their
-structured IDs in `error.data`. `chats queue-show` exits 1 for a `withdrawn` or
-`failed` message, the same way `tables import-status` exits 1 on a failed import.
+an answer. An interrupted wait — clean EOF or a transport error — always exits **1**
+and always carries the recovery IDs in `error.data`:
+
+| Terminal | When | `error.data` | Recovery |
+|----------|------|--------------|----------|
+| `QUEUE_INCOMPLETE` | the message never started | `queuedMessageId`, `idempotencyKey`, `held`, `position` | `chats queue-show`, or re-send **with the same `--idempotency-key`**; `chats queue-withdraw` to drop it |
+| `QUEUE_STREAM_INCOMPLETE` | the message started, the reply did not finish | `queuedMessageId`, `text` (partial), and `messageId` when the stream announced one | `chats events --message <messageId>` if present, else `chats queue-show` for the binding. Do **not** re-send, and do not withdraw — it would 409 |
+| `STREAM_INCOMPLETE` | the send was (or may have been) accepted but the stream ended, dropped, or never opened | `idempotencyKey`, `text` (partial) | re-send **with the same `--idempotency-key`**, which reconnects to that turn rather than starting a second one |
+
+A sum-api **5xx on a keyed send** (`502`/`503`/`504` — it forwarded the message but could not read the answer back) is the same situation and gets the same advice: the error carries `error.data.idempotencyKey` and tells you to replay it, not to re-send. A `4xx` is a refusal — that send did not land, so it keeps the ordinary error envelope.
+| `REPLY_CANCELLED` / `REPLY_ERROR` | the server's `done` reported `status: cancelled` / `error` | `messageId`, `text` (partial) | the turn ended without a complete answer — read the message, or send again |
+
+Never recover by re-sending with a fresh key: that asks Addison the same question
+twice. `chats reply` reports the key it used in `result.queued_message.idempotency_key`
+and in `error.data.idempotencyKey`, precisely so an auto-generated key can be replayed.
+
+Queue errors (`conversation_queue_full`, `conversation_queue_held`,
+`queue_wait_timeout`, `queued_message_already_dispatched`, …) likewise exit non-zero
+with their structured IDs. `chats queue-show` exits 1 for a `withdrawn` or `failed`
+message, and `chats cancel` exits 1 on `not_found` (nothing was stopped), the same way
+`tables import-status` exits 1 on a failed import. An `already_complete` cancel is a
+success — the reply is genuinely over.
 
 > **Note:** `--no-wait` does not detach from a queued send — see the caveat above.
 > Both `--wait` and `--no-wait` drain the stream, so the command stays attached
@@ -614,6 +629,11 @@ structured IDs in `error.data`. `chats queue-show` exits 1 for a `withdrawn` or
 - Success and validation errors print one JSON envelope; failures use **`exit 1`** (`emit_error` or `SystemExit` after a stream error).
 - With `--follow`, intermediate lines are NDJSON (`type`: `start`, `text`, `step`, `progress`, `log`, …). The **last line** is a terminal envelope: `type` `result` or `error`, spreading the same `ok` / `error` / `fix` fields as non-streaming output.
 - SSE `error` events and transport failures produce a terminal `error` envelope and **exit 1** (without printing a second JSON blob).
+- sum-api wraps every public SSE event as `{type, sequence, data}`. The CLI unwraps that envelope, so a streamed command reports the assistant text at `result.*.text` and the id at `result.*.payload.messageId`. **Changed in the queue release:** those fields previously sat one level deeper (`payload.data.messageId`) and `text` was always empty, because only the `error` branch unwrapped. Callers pinned to an older sumcli read the old path.
+- A `done` event carrying `status: cancelled` or `status: error` is a failure terminal, not a success. Reachable now that `chats cancel` exists, and already reachable via the server's stall path, which ends a stream with `done{status: "error"}`.
+- A `done` with no `messageId` and no `status` is **not** a success either. sum-api appends exactly that frame when an upstream stream ends without its own terminal, so truncation arrives wearing a success event's name; `chats create`, `chats reply`, and `chats events` report `STREAM_INCOMPLETE` and **exit 1**. `reports` keeps the permissive fallback here, since its acceptance criteria were not re-verified for this release. `--raw-sse` is unaffected — it dumps bytes without parsing.
+
+> **These three apply to `reports generate` and `reports verify` too**, which stream through the same sum-api helper as chats. Concretely: `result.report.payload` / `result.verification.payload` lose one level, `result.*.text` is now populated instead of always empty, `--follow` (on by default for reports) now emits `text` NDJSON records, and a cancelled or errored generation exits 1 as `REPLY_CANCELLED` / `REPLY_ERROR` instead of 0. `grid push` is unaffected — it is a plain JSON route, not SSE.
 
 ### Errors
 
