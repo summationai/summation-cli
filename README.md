@@ -70,7 +70,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer CLI releases are alway
 | `config` | Profiles, active session, and `~/.summation/summation-config` (`use`, `set-project`, `import-env`, …) |
 | `tenant` | Organization and tenant metadata |
 | `projects` | Project CRUD and `current` |
-| `chats` | Addison conversations; SSE → NDJSON with `--follow` on create/reply |
+| `chats` | Addison conversations; SSE → NDJSON with `--follow` on create/reply; durable follow-up queue (`queue-list`, `queue-show`, `queue-withdraw`, `queue-resume`) and `cancel` |
 | `reports` | Generate and verify reports (`.sdoc`); file ops via `files` |
 | `playbooks` | Playbook discovery |
 | `schedules` | Recurring playbook runs (CRUD, `pause`/`resume`, `run`, `runs`); create may require workflows |
@@ -500,6 +500,15 @@ python scripts/refresh_openapi.py --check
 
 Per-PR CI gates on the offline contract tests above only. Production reconciliation runs on a schedule via `.github/workflows/sumcli-openapi-snapshot.yaml` so unrelated backend PRs are not reddened when sum-api deploys ahead of the snapshot.
 
+> **Staged ahead of deploy:** the conversation-queue operations
+> (`…/conversations/{id}/queue*`, `…/messages/{id}/cancel`) and `ChatMessageRequest`'s
+> `on_busy`/`idempotency_key` were merged into the snapshot from sum-api's own
+> generated spec before that contract reached production, because the CLI cannot call
+> a route the snapshot does not document. Until sum-api deploys, the scheduled
+> `--check` reconciliation will report these as differences. Re-run
+> `python scripts/refresh_openapi.py` against production before tagging a release that
+> ships the `chats queue-*` commands.
+
 Command-tree action blurbs for API-backed commands are derived from the snapshot at runtime via `sum_cli/openapi_doc.py`; `config` and other local-only actions stay hand-written there. Composite commands (`tables import`, `reports verify`) have known doc/route alignment gaps — see comments in `openapi_doc.py`.
 
 ## Design rules
@@ -509,7 +518,7 @@ Command-tree action blurbs for API-backed commands are derived from the snapshot
 # Typer group help= or command docstrings in resource modules.
 - OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`).
 - No imports from sum-api service code or gRPC clients.
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`, `chats cancel`, `chats queue-withdraw`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).
@@ -550,6 +559,55 @@ sumcli chats create -m "hello" --follow              # wait, NDJSON stream
 **`tables import`** uses `--wait/--no-wait` only (no `--follow`). With `--wait`, stdout is NDJSON (`step`, `progress`, then a terminal `result` or `error` line). Failed uploads or import statuses `FAILED` / `ERROR` emit an `error` terminal and **exit code 1**. On success the `result` carries `import_id` and the resolved **`table_id`** (looked up from `/v1/tables` by name, since `/v1/table-imports` returns only the import status), so you can pipe straight into `tables show <table_id>`.
 
 **`chats events`** always streams NDJSON (`--raw-sse` optional); stream errors exit **1**.
+
+### Queued follow-ups (`chats reply --on-busy`)
+
+A chat runs one turn at a time. When you reply while Addison is still working,
+`--on-busy` decides what happens:
+
+| Value | Behavior |
+|-------|----------|
+| `queue` (default) | The message is durably enqueued and runs next. The stream reports `queued` with a **queued message ID**, keeps the connection alive, then streams the reply once the turn starts. |
+| `reject` | The send fails immediately with `conversation_busy`, carrying `activeMessageId`. |
+
+Up to **five** messages can wait per chat; a sixth is refused with
+`conversation_queue_full`. Waiting messages survive reloads, client crashes, and
+server restarts — the queue lives in the server, not in the CLI.
+
+```bash
+sumcli chats reply --chat chat-... -m "Compare Q3"                      # queue if busy
+sumcli chats reply --chat chat-... -m "Compare Q3" --on-busy reject      # fail if busy
+sumcli chats reply --chat chat-... -m "Compare Q3" --idempotency-key send-42
+
+sumcli chats queue-list --chat chat-...
+sumcli chats queue-show --chat chat-... --queued-message qt-...
+sumcli chats queue-withdraw --chat chat-... --queued-message qt-... --confirm
+sumcli chats queue-resume --chat chat-...
+sumcli chats cancel --chat chat-... --message msg-... --confirm
+```
+
+**Idempotency.** `chats reply` generates one `idempotency_key` per invocation and
+sends it with the request, so a retried request cannot enqueue the message twice.
+Pass `--idempotency-key` to *recover* an earlier send: replaying the same key
+returns the same accepted message instead of creating a second one.
+
+**Stop holds the queue.** `chats cancel` stops the in-progress reply (irreversible,
+so it requires `--confirm`) and **pauses** the backlog rather than draining it —
+the response reports `queueHeld: true`. Release it with `chats queue-resume`.
+
+**Waiting is not success.** `queued` status events and heartbeats are progress, not
+an answer. If the stream ends while the message is still waiting, the CLI emits a
+`QUEUE_INCOMPLETE` error terminal and **exit 1**, carrying `queuedMessageId` so you
+can pick the message back up with `chats queue-show`. Queue errors
+(`conversation_queue_full`, `conversation_queue_held`, `queue_wait_timeout`,
+`queued_message_already_dispatched`, …) likewise exit non-zero with their
+structured IDs in `error.data`. `chats queue-show` exits 1 for a `withdrawn` or
+`failed` message, the same way `tables import-status` exits 1 on a failed import.
+
+> **Note:** `--no-wait` does not detach from a queued send — see the caveat above.
+> Both `--wait` and `--no-wait` drain the stream, so the command stays attached
+> until the queued message runs (or the server's 30-minute observation cap fires a
+> recoverable `queue_wait_timeout`). Detach-on-accept would be a separate feature.
 
 ### Streaming and exit codes
 

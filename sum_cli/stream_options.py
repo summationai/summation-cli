@@ -9,7 +9,7 @@ import typer
 
 from sum_cli.client import Client
 from sum_cli.output import emit, emit_error, err
-from sum_cli.streaming import stream_sse_response
+from sum_cli.streaming import QueueObservation, stream_sse_response
 
 WaitOption = Annotated[
     bool,
@@ -71,11 +71,17 @@ def post_with_wait_follow(
     follow: bool,
     json: dict | None = None,
     result_builder: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
+    queue_state: QueueObservation | None = None,
 ) -> StreamPostResult:
     """Consume the SSE stream the server always returns; emit live NDJSON only when --follow.
 
     The server responds with SSE for every wait/follow combination; the CLI varies only
     the surface output (live NDJSON vs. final envelope).
+
+    `queue_state` is forwarded to the stream so a caller can report a durable queue
+    receipt. Note that neither `--wait` nor `--no-wait` detaches: both drain the
+    stream, so a queued send waits for its turn in-process (see README, "Long-running
+    commands"). A true detach-on-accept mode would be a separate feature.
     """
     validate_wait_follow(wait=wait, follow=follow)
     with client.stream(method, path, json=json) as resp:
@@ -83,6 +89,7 @@ def post_with_wait_follow(
             resp,
             result_builder=result_builder,
             silent=not (wait and follow),
+            queue_state=queue_state,
         )
     # A terminal stream error is a failure of the whole operation: surface it as the
     # top-level envelope and exit 1, never let a caller nest it under ok:true.

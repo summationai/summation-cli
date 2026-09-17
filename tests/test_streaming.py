@@ -94,3 +94,154 @@ def test_stream_done_event_returns_success_terminal() -> None:
     )
     assert terminal["ok"] is True
     assert terminal["result"]["payload"]["content"] == "hi"
+
+
+# ---------------------------------------------------------------------------
+# Durable queue: waiting is not completion.
+#
+# Public sum-api frames nest their fields under {"type","sequence","data"}; the
+# older flat-payload tests above still pass because `event_data` only unwraps a
+# frame that actually carries the envelope.
+# ---------------------------------------------------------------------------
+
+
+def _frame(event: str, data: dict, sequence: int = 0) -> str:
+    import json as _json
+
+    body = _json.dumps({"type": event, "sequence": sequence, "data": data})
+    return f"event: {event}\nid: {sequence}\ndata: {body}\n\n"
+
+
+def test_event_data_unwraps_public_envelope_but_leaves_flat_payloads() -> None:
+    from sum_cli.streaming import event_data
+
+    assert event_data({"type": "done", "sequence": 3, "data": {"content": "hi"}}) == {
+        "content": "hi"
+    }
+    assert event_data({"content": "hi"}) == {"content": "hi"}
+
+
+def test_queued_status_is_recorded_without_being_a_terminal() -> None:
+    from sum_cli.streaming import QueueObservation
+
+    state = QueueObservation()
+    frames = [
+        _frame("status", {"message": "queued", "queuedMessageId": "qt_1", "position": 2}),
+        _frame("done", {"messageId": "msg_9", "content": "answer"}, sequence=4),
+    ]
+    terminal = stream_sse_response(
+        _FakeResponse(frames),
+        result_builder=lambda p, t: {"payload": p},
+        silent=True,
+        queue_state=state,
+    )
+
+    assert state.queued_message_id == "qt_1"
+    assert state.position == 2
+    assert state.held is False
+    assert terminal["ok"] is True
+    assert terminal["result"]["payload"]["messageId"] == "msg_9"
+
+
+def test_held_status_is_reported_as_held() -> None:
+    from sum_cli.streaming import QueueObservation
+
+    state = QueueObservation()
+    stream_sse_response(
+        _FakeResponse([_frame("status", {"message": "held", "queuedMessageId": "qt_2"})]),
+        silent=True,
+        queue_state=state,
+    )
+    assert state.held is True
+
+
+def test_eof_while_queued_is_incomplete_not_success() -> None:
+    """A stream that ends mid-wait has not delivered an answer. Never report ok."""
+    frames = [_frame("status", {"message": "queued", "queuedMessageId": "qt_3", "position": 1})]
+    terminal = stream_sse_response(_FakeResponse(frames), silent=True)
+
+    assert terminal["ok"] is False
+    assert terminal["error"]["code"] == "QUEUE_INCOMPLETE"
+    assert terminal["error"]["data"]["queuedMessageId"] == "qt_3"
+    assert "queue-show" in terminal["fix"]
+
+
+def test_eof_after_a_heartbeat_while_queued_is_still_incomplete() -> None:
+    frames = [
+        _frame("status", {"message": "queued", "queuedMessageId": "qt_4"}),
+        _frame("heartbeat", {}, sequence=1),
+    ]
+    terminal = stream_sse_response(_FakeResponse(frames), silent=True)
+    assert terminal["ok"] is False
+    assert terminal["error"]["code"] == "QUEUE_INCOMPLETE"
+
+
+def test_eof_without_a_queue_wait_keeps_the_existing_success_terminal() -> None:
+    frames = [_frame("message.delta", {"text": "partial"})]
+    terminal = stream_sse_response(_FakeResponse(frames), silent=True)
+    assert terminal["ok"] is True
+    assert terminal["result"]["text"] == "partial"
+
+
+def test_queue_wait_timeout_error_preserves_the_recovery_id() -> None:
+    frames = [
+        _frame("status", {"message": "queued", "queuedMessageId": "qt_5"}),
+        _frame(
+            "error",
+            {
+                "code": "queue_wait_timeout",
+                "message": "Timed out watching the queued message.",
+                "queuedMessageId": "qt_5",
+            },
+            sequence=9,
+        ),
+    ]
+    terminal = stream_sse_response(_FakeResponse(frames), silent=True)
+    assert terminal["ok"] is False
+    assert terminal["error"]["code"] == "queue_wait_timeout"
+    assert terminal["error"]["data"]["queuedMessageId"] == "qt_5"
+
+
+def test_withdrawn_queued_message_is_an_error_terminal() -> None:
+    frames = [
+        _frame("status", {"message": "queued", "queuedMessageId": "qt_6"}),
+        _frame(
+            "error",
+            {
+                "code": "queued_message_withdrawn",
+                "message": "The queued message was withdrawn before it ran.",
+                "queuedMessageId": "qt_6",
+            },
+            sequence=2,
+        ),
+    ]
+    terminal = stream_sse_response(_FakeResponse(frames), silent=True)
+    assert terminal["ok"] is False
+    assert terminal["error"]["code"] == "queued_message_withdrawn"
+
+
+def test_queue_updated_advances_the_observed_position() -> None:
+    from sum_cli.streaming import QueueObservation
+
+    state = QueueObservation()
+    frames = [
+        _frame("status", {"message": "queued", "queuedMessageId": "qt_7", "position": 3}),
+        _frame("queue.updated", {"position": 1, "queuedMessageId": "qt_7"}, sequence=1),
+        _frame("done", {"messageId": "msg_1"}, sequence=2),
+    ]
+    stream_sse_response(_FakeResponse(frames), silent=True, queue_state=state)
+    assert state.position == 1
+
+
+def test_nested_message_delta_text_is_accumulated() -> None:
+    frames = [
+        _frame("message.delta", {"text": "Hello "}),
+        _frame("message.delta", {"text": "world"}, sequence=1),
+        _frame("done", {"messageId": "msg_1"}, sequence=2),
+    ]
+    terminal = stream_sse_response(
+        _FakeResponse(frames),
+        result_builder=lambda p, t: {"text": t},
+        silent=True,
+    )
+    assert terminal["result"]["text"] == "Hello world"

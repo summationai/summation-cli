@@ -54,7 +54,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always
    - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
 3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
 4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`, `chats cancel`, `chats queue-withdraw`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
 6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
 7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
@@ -124,7 +124,7 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `tables` | grid tables, CSV `import`, `append`, `upsert`, `data` |
 | `views` | Summation views |
 | `queries` | read-only SQL (`queries run --sql` / `--file`); cap rows with SQL `LIMIT` or `--limit` (API default 100, max 10000/request; higher auto-paginates) |
-| `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |
+| `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message; `queue-*` manages queued follow-ups; `cancel` stops a reply |
 | `reports` | generate/verify (`.sdoc`); default `--follow` on |
 | `playbooks` | discovery only (`list`, `show`) — **read-only**; author and edit via `chats` |
 | `schedules` | recurring playbook runs (CRUD, pause/resume, run now, run history); create may 403 `use_workflows` |
@@ -504,6 +504,50 @@ Schedule ids are `schedule_<uuid>`, not `sch-...`. After `create`, confirm `stat
     ```
 
 13. **A queued run appears as a marker row with `has_execution: false`.** A run that has not produced an execution yet has no execution fields to report, so it is emitted as a single row carrying the parent context and that flag. This is deliberate: dropping it would make a run you just triggered look like it never happened. Right after `schedules run --confirm`, expect exactly this row — poll again for the outcome rather than reading its absence as a failure. Test `.has_execution == false` rather than probing for a missing `id`.
+
+### Queued follow-ups
+
+A chat runs **one turn at a time**. Replying while Addison is still working no longer
+has to fail: `chats reply --on-busy queue` (the default) enqueues the message durably
+and streams its reply when the turn starts. `--on-busy reject` keeps the old behavior
+(`conversation_busy`, carrying `activeMessageId`). Up to **five** messages wait per
+chat; a sixth is refused with `conversation_queue_full`. The queue lives server-side,
+so it survives a client crash.
+
+```bash
+sumcli chats reply --chat chat-... -m "Compare Q3"                          # queue if busy
+sumcli chats reply --chat chat-... -m "Compare Q3" --on-busy reject          # fail if busy
+sumcli chats reply --chat chat-... -m "Compare Q3" --idempotency-key send-42
+
+sumcli chats queue-list --chat chat-...                                      # held + revision + items
+sumcli chats queue-show --chat chat-... --queued-message qt-...              # one receipt
+sumcli chats queue-withdraw --chat chat-... --queued-message qt-... --confirm
+sumcli chats queue-resume --chat chat-...
+sumcli chats cancel --chat chat-... --message msg-... --confirm
+```
+
+**Best practices**
+
+1. **Treat `queued` as pending, never as done.** A `queued` status event and heartbeats
+   are progress. If the stream ends while the message is still waiting, the CLI exits
+   **1** with `QUEUE_INCOMPLETE` and `error.data.queuedMessageId` — resume with
+   `chats queue-show`, do not re-send. Re-sending without the original
+   `--idempotency-key` enqueues a second copy.
+2. **Keep the queued message ID.** `chats reply` puts it in `result.queued_message`.
+   Before the turn dispatches there is no assistant message ID, so the receipt is the
+   only handle on that work.
+3. **A finished queued message still answers `queue-show`.** It can dispatch and finish
+   before you poll; the receipt then carries `messageId`, and `chats events --message`
+   replays the reply. Absence of a stream is not a lost answer.
+4. **`chats cancel` holds the queue; it does not drain it.** Waiting messages survive the
+   Stop (`queueHeld: true`) and only start again after `chats queue-resume`. Do not read
+   a held queue as a stuck one.
+5. **`queue-show` exits 1 for `withdrawn` and `failed`.** Same convention as
+   `tables import-status`. Read `error.data.failure_code` before deciding to re-send.
+6. **`--no-wait` does not detach from a queued send.** Both wait modes drain the stream,
+   so the command stays attached until the message runs or the server's 30-minute
+   observation cap fires a recoverable `queue_wait_timeout`. For fire-and-forget, send
+   with an idempotency key, let it time out, and poll `queue-show`.
 
 ### Chat feedback
 

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import uuid
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
 from sum_cli.commands import (
     ProfileOption,
     api_client,
+    api_confirm_params,
     extract_list,
+    require_confirm,
     require_project,
     unwrap_data,
 )
@@ -20,7 +23,7 @@ from sum_cli.stream_options import (
     WaitOption,
     post_with_wait_follow,
 )
-from sum_cli.streaming import exit_if_stream_failed, stream_sse_response
+from sum_cli.streaming import QueueObservation, exit_if_stream_failed, stream_sse_response
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -35,6 +38,14 @@ _DETAILS_MAX_LEN = 4000
 class FeedbackRating(str, Enum):
     thumbs_up = "thumbs_up"
     thumbs_down = "thumbs_down"
+
+
+# Mirrors ChatMessageRequest.on_busy in the sum-api OpenAPI snapshot. Only these
+# two modes exist — steer and interrupt are deliberately not offered — so Typer's
+# Click Choice rejects anything else at parse time instead of 422-ing upstream.
+class OnBusy(str, Enum):
+    queue = "queue"
+    reject = "reject"
 
 
 class FeedbackReason(str, Enum):
@@ -157,12 +168,40 @@ def reply_chat(
     chat_id: Annotated[str, typer.Option("--chat", "-c")],
     message: Annotated[str, typer.Option("--message", "-m")],
     project: Annotated[str | None, typer.Option("--project")] = None,
+    on_busy: Annotated[
+        OnBusy,
+        typer.Option(
+            "--on-busy",
+            help=(
+                "What to do when the chat is already working: 'queue' waits durably "
+                "and runs next, 'reject' fails with conversation_busy."
+            ),
+        ),
+    ] = OnBusy.queue,
+    idempotency_key: Annotated[
+        str | None,
+        typer.Option(
+            "--idempotency-key",
+            help=(
+                "Stable key for this logical send. Generated per invocation when "
+                "omitted; pass the key from an interrupted run to resume that same "
+                "message instead of sending a second one."
+            ),
+        ),
+    ] = None,
     wait: WaitOption = True,
     follow: FollowOption = False,
     profile: ProfileOption = None,
 ) -> None:
     pid = require_project(ctx, project)
     path = f"/v1/projects/{pid}/conversations/{chat_id}/messages"
+    payload = _msg_body(message)
+    payload["on_busy"] = on_busy.value
+    # One key per invocation, generated before the request goes out, so a retry of
+    # *this* run (or a re-run with the key echoed back) resumes the same message
+    # rather than enqueueing a duplicate. An explicit key recovers a previous run.
+    payload["idempotency_key"] = idempotency_key or uuid.uuid4().hex
+    queue_state = QueueObservation()
     with api_client(ctx, profile) as c:
         outcome = post_with_wait_follow(
             c,
@@ -170,14 +209,32 @@ def reply_chat(
             path,
             wait=wait,
             follow=follow,
-            json=_msg_body(message),
+            json=payload,
             result_builder=lambda p, t: {"text": t, "payload": p},
+            queue_state=queue_state,
         )
         if outcome.streamed:
             return
         body = outcome.body
     result = unwrap_data(body or {}, "data") or body
+    envelope: dict[str, Any] = {"message": result, "project_id": pid}
     next_actions: list = []
+    if queue_state.waiting:
+        # The send waited its turn. Report the receipt: it is the durable handle
+        # for this message, and the only one if the stream is interrupted.
+        envelope["queued_message"] = queue_state.as_result()
+        next_actions.append(
+            action(
+                "Show queued message",
+                "sumcli chats queue-show --chat <chat-id> --queued-message <queued-message-id>",
+                params={
+                    "chat-id": param("Chat ID", value=chat_id),
+                    "queued-message-id": param(
+                        "Queued message ID", value=queue_state.queued_message_id
+                    ),
+                },
+            )
+        )
     if not wait and isinstance(result, dict) and result.get("message_id"):
         next_actions.append(
             action(
@@ -189,7 +246,7 @@ def reply_chat(
                 },
             )
         )
-    emit(ok({"message": result, "project_id": pid}, next_actions=next_actions))
+    emit(ok(envelope, next_actions=next_actions))
 
 
 @app.command("events")
@@ -209,6 +266,273 @@ def stream_events(
                 resp, raw_sse=raw_sse, result_builder=lambda p, t: {"text": t}
             )
         exit_if_stream_failed(terminal)
+
+
+# ---------------------------------------------------------------------------
+# Durable turn queue.
+#
+# When a chat is already working, a queue-mode reply waits durably instead of
+# being rejected. These commands inspect and manage that backlog. A queue receipt
+# ("queued message") is addressable for the chat's lifetime, so a terminal one
+# still answers `queue-show` with the assistant message it produced.
+# ---------------------------------------------------------------------------
+
+ChatOption = Annotated[str, typer.Option("--chat", "-c", help="Chat the queue belongs to.")]
+QueuedMessageOption = Annotated[
+    str, typer.Option("--queued-message", help="Queued message ID (qt_...).")
+]
+
+# Terminal states that are not an answer. `queue-show` exits non-zero on these so
+# a polling caller can stop on failure the same way `tables import-status` does,
+# instead of having to parse state out of a successful envelope.
+_QUEUE_FAILURE_EXITS = {
+    "failed": (
+        "QUEUED_MESSAGE_FAILED",
+        "The queued message failed before it ran.",
+        "Read error.data.failure_detail, fix the cause, and send the message again.",
+    ),
+    "withdrawn": (
+        "QUEUED_MESSAGE_WITHDRAWN",
+        "The queued message was withdrawn before it ran.",
+        "Send the message again if it is still needed.",
+    ),
+}
+
+
+def _queue_item(body: object) -> dict:
+    item = unwrap_data(body or {}, "data")
+    return item if isinstance(item, dict) else {}
+
+
+def _resume_action(chat_id: str) -> dict:
+    return action(
+        "Resume the queue",
+        "sumcli chats queue-resume --chat <chat-id>",
+        params={"chat-id": param("Chat ID", value=chat_id)},
+    )
+
+
+@app.command("queue-list")
+def list_queue(
+    ctx: typer.Context,
+    chat_id: ChatOption,
+    project: Annotated[str | None, typer.Option("--project")] = None,
+    count: Annotated[int | None, typer.Option("--count")] = None,
+    profile: ProfileOption = None,
+) -> None:
+    pid = require_project(ctx, project)
+    with api_client(ctx, profile) as c:
+        body = c.request("GET", f"/v1/projects/{pid}/conversations/{chat_id}/queue")
+    data = unwrap_data(body or {}, "data")
+    data = data if isinstance(data, dict) else {}
+    listed = truncate_list(extract_list(data, "items"), count=count)
+    held = bool(data.get("held"))
+    next_actions = [
+        action(
+            "Show queued message",
+            "sumcli chats queue-show --chat <chat-id> --queued-message <queued-message-id>",
+            params={
+                "chat-id": param("Chat ID", value=chat_id),
+                "queued-message-id": param("Queued message ID"),
+            },
+        )
+    ]
+    if held:
+        # A held queue does not drain on its own; without this the listing reports
+        # waiting messages that will never start and offers no way out.
+        next_actions.insert(0, _resume_action(chat_id))
+    emit(
+        ok(
+            {
+                "queued_messages": listed["items"],
+                "held": held,
+                "revision": data.get("revision"),
+                "chat_id": chat_id,
+                "project_id": pid,
+                **{k: v for k, v in listed.items() if k != "items"},
+            },
+            next_actions=next_actions,
+        )
+    )
+
+
+@app.command("queue-show")
+def show_queued_message(
+    ctx: typer.Context,
+    chat_id: ChatOption,
+    queued_message_id: QueuedMessageOption,
+    project: Annotated[str | None, typer.Option("--project")] = None,
+    profile: ProfileOption = None,
+) -> None:
+    pid = require_project(ctx, project)
+    with api_client(ctx, profile) as c:
+        body = c.request(
+            "GET",
+            f"/v1/projects/{pid}/conversations/{chat_id}/queue/{queued_message_id}",
+        )
+    item = _queue_item(body)
+    state = str(item.get("state") or "")
+    failure = _QUEUE_FAILURE_EXITS.get(state)
+    if failure is not None:
+        code, message, fix = failure
+        emit_error(
+            err(
+                code,
+                item.get("failureDetail") or message,
+                fix,
+                data={
+                    "queued_message_id": item.get("id") or queued_message_id,
+                    "state": state,
+                    "failure_code": item.get("failureCode"),
+                    "failure_detail": item.get("failureDetail"),
+                },
+            )
+        )
+    next_actions: list = []
+    bound_message_id = item.get("messageId")
+    if bound_message_id:
+        # Dispatched (possibly already finished): the reply lives on the bound
+        # assistant message, which is how a caller reads an answer it never saw.
+        next_actions.append(
+            action(
+                "Stream events",
+                "sumcli chats events --chat <chat-id> --message <message-id>",
+                params={
+                    "chat-id": param("Chat ID", value=chat_id),
+                    "message-id": param("Message ID", value=bound_message_id),
+                },
+            )
+        )
+    else:
+        next_actions.append(
+            action(
+                "Withdraw queued message",
+                "sumcli chats queue-withdraw --chat <chat-id> "
+                "--queued-message <queued-message-id> --confirm",
+                params={
+                    "chat-id": param("Chat ID", value=chat_id),
+                    "queued-message-id": param("Queued message ID", value=queued_message_id),
+                },
+            )
+        )
+    emit(
+        ok(
+            {"queued_message": item, "chat_id": chat_id, "project_id": pid},
+            next_actions=next_actions,
+        )
+    )
+
+
+@app.command("queue-withdraw")
+def withdraw_queued_message(
+    ctx: typer.Context,
+    chat_id: ChatOption,
+    queued_message_id: QueuedMessageOption,
+    project: Annotated[str | None, typer.Option("--project")] = None,
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    profile: ProfileOption = None,
+) -> None:
+    require_confirm(confirm, action_name="chats queue-withdraw")
+    pid = require_project(ctx, project)
+    with api_client(ctx, profile) as c:
+        body = c.request(
+            "DELETE",
+            f"/v1/projects/{pid}/conversations/{chat_id}/queue/{queued_message_id}",
+            params=api_confirm_params(),
+        )
+    emit(
+        ok(
+            {
+                "queued_message": _queue_item(body),
+                "chat_id": chat_id,
+                "project_id": pid,
+            },
+            next_actions=[
+                action(
+                    "List queued messages",
+                    "sumcli chats queue-list --chat <chat-id>",
+                    params={"chat-id": param("Chat ID", value=chat_id)},
+                )
+            ],
+        )
+    )
+
+
+@app.command("queue-resume")
+def resume_queue(
+    ctx: typer.Context,
+    chat_id: ChatOption,
+    project: Annotated[str | None, typer.Option("--project")] = None,
+    profile: ProfileOption = None,
+) -> None:
+    pid = require_project(ctx, project)
+    with api_client(ctx, profile) as c:
+        body = c.request("POST", f"/v1/projects/{pid}/conversations/{chat_id}/queue/resume")
+    data = unwrap_data(body or {}, "data")
+    data = data if isinstance(data, dict) else {}
+    emit(
+        ok(
+            {
+                "held": bool(data.get("held")),
+                "revision": data.get("revision"),
+                "active_message_id": data.get("activeMessageId"),
+                "queued_messages": extract_list(data, "queuedTurns"),
+                "chat_id": chat_id,
+                "project_id": pid,
+            },
+            next_actions=[
+                action(
+                    "List queued messages",
+                    "sumcli chats queue-list --chat <chat-id>",
+                    params={"chat-id": param("Chat ID", value=chat_id)},
+                )
+            ],
+        )
+    )
+
+
+@app.command("cancel")
+def cancel_reply(
+    ctx: typer.Context,
+    chat_id: ChatOption,
+    message_id: Annotated[
+        str, typer.Option("--message", help="Assistant message whose reply to stop.")
+    ],
+    project: Annotated[str | None, typer.Option("--project")] = None,
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    profile: ProfileOption = None,
+) -> None:
+    require_confirm(confirm, action_name="chats cancel")
+    pid = require_project(ctx, project)
+    with api_client(ctx, profile) as c:
+        body = c.request(
+            "POST",
+            f"/v1/projects/{pid}/conversations/{chat_id}/messages/{message_id}/cancel",
+            params=api_confirm_params(),
+        )
+    result = _queue_item(body)
+    next_actions = [
+        action(
+            "Show chat",
+            "sumcli chats show --chat <chat-id>",
+            params={"chat-id": param("Chat ID", value=chat_id)},
+        )
+    ]
+    # Stop holds the queue rather than draining it, so waiting messages survive the
+    # cancel. Say so, and give the command that releases them.
+    if result.get("queueHeld"):
+        next_actions.insert(0, _resume_action(chat_id))
+    emit(
+        ok(
+            {
+                "cancel": result,
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "project_id": pid,
+            },
+            next_actions=next_actions,
+        )
+    )
 
 
 @app.command("feedback")

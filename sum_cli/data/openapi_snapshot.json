@@ -117,6 +117,50 @@
         "title": "Body_issue_m2m_token",
         "type": "object"
       },
+      "CancelReplyData": {
+        "properties": {
+          "messageId": {
+            "description": "The message whose reply was cancelled.",
+            "title": "Messageid",
+            "type": "string"
+          },
+          "queueHeld": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True when a waiting queue was paused by this Stop; null on conversations with no queue.",
+            "title": "Queueheld"
+          },
+          "status": {
+            "description": "Outcome: canceled, already_complete, already_error, or not_found.",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "messageId",
+          "status"
+        ],
+        "title": "CancelReplyData",
+        "type": "object"
+      },
+      "CancelReplyResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CancelReplyData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "CancelReplyResponse",
+        "type": "object"
+      },
       "CatalogEntryAttachRequest": {
         "properties": {
           "source_id": {
@@ -230,6 +274,7 @@
         "type": "object"
       },
       "ChatMessageRequest": {
+        "description": "A follow-up message in an existing conversation.\n\n``on_busy`` and ``idempotency_key`` are reply-only: they matter when a\nconversation may already be running a turn. Creating a conversation always\ndispatches its first turn (a new chat is never busy), and chat creation is not\nitself idempotency-keyed, so a fused create cannot honor a retry key \u2014 those\nfields would be a false promise there and live on the reply request only.",
         "properties": {
           "display_content": {
             "anyOf": [
@@ -270,6 +315,20 @@
             "title": "File Ids",
             "type": "array"
           },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional client-supplied key that makes this reply retry-safe: replaying the same key returns the same accepted turn instead of creating a duplicate. Supply a stable key per logical message when retrying.",
+            "title": "Idempotency Key"
+          },
           "mentioned_file_ids": {
             "description": "Project file ids referenced inline in the message.",
             "items": {
@@ -296,6 +355,16 @@
             ],
             "description": "Chat model id to use for this turn, from GET /v1/chat-models. Per-request model selection is honored where enabled for the tenant; otherwise the default model applies. The reply metadata reports the model that ran.",
             "title": "Model"
+          },
+          "on_busy": {
+            "default": "queue",
+            "description": "What to do when the conversation is already working on a previous message: 'queue' durably enqueues this turn to run next (streamed once it dispatches); 'reject' returns a conversation_busy error instead.",
+            "enum": [
+              "queue",
+              "reject"
+            ],
+            "title": "On Busy",
+            "type": "string"
           }
         },
         "required": [
@@ -742,6 +811,44 @@
           "data"
         ],
         "title": "ConversationFeedbackResponse",
+        "type": "object"
+      },
+      "ConversationQueueData": {
+        "properties": {
+          "held": {
+            "default": false,
+            "description": "True while the queue is paused by a Stop; resume to drain.",
+            "title": "Held",
+            "type": "boolean"
+          },
+          "items": {
+            "description": "Waiting messages in FIFO order.",
+            "items": {
+              "$ref": "#/components/schemas/QueuedMessage"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "revision": {
+            "default": 0,
+            "description": "Monotonic queue version; ignore snapshots older than one you hold.",
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "title": "ConversationQueueData",
+        "type": "object"
+      },
+      "ConversationQueueResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConversationQueueData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ConversationQueueResponse",
         "type": "object"
       },
       "CsvParsingInfoRequest": {
@@ -1713,6 +1820,170 @@
         "title": "QueryExecutionRequest",
         "type": "object"
       },
+      "QueuedMessage": {
+        "properties": {
+          "behindMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Assistant message id this turn waits behind, when known.",
+            "title": "Behindmessageid"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the message was enqueued (ISO 8601).",
+            "title": "Createdat"
+          },
+          "createdByUserId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "User who enqueued the message (shared conversations record the author).",
+            "title": "Createdbyuserid"
+          },
+          "displayContent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional alternate display rendering of the message.",
+            "title": "Displaycontent"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reasoning effort requested for the turn, if any.",
+            "title": "Effort"
+          },
+          "failureCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stable failure code if the turn failed before running.",
+            "title": "Failurecode"
+          },
+          "failureDetail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable failure reason if the turn failed.",
+            "title": "Failuredetail"
+          },
+          "id": {
+            "description": "Queued message id (address it with the queue endpoints).",
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "description": "The user message text waiting to run.",
+            "title": "Message",
+            "type": "string"
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bound assistant message id once the turn has dispatched (else null).",
+            "title": "Messageid"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Chat model id requested for the turn, if any.",
+            "title": "Model"
+          },
+          "position": {
+            "description": "1-based position among waiting messages (0 once dispatched or terminal).",
+            "title": "Position",
+            "type": "integer"
+          },
+          "state": {
+            "description": "Lifecycle: queued, dispatching, dispatched, withdrawn, or failed.",
+            "title": "State",
+            "type": "string"
+          },
+          "userMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bound user message id once the turn has dispatched (else null).",
+            "title": "Usermessageid"
+          }
+        },
+        "required": [
+          "id",
+          "position",
+          "state",
+          "message"
+        ],
+        "title": "QueuedMessage",
+        "type": "object"
+      },
+      "QueuedMessageResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/QueuedMessage"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "QueuedMessageResponse",
+        "type": "object"
+      },
       "ReportGenerateRequest": {
         "properties": {
           "display_content": {
@@ -1856,6 +2127,58 @@
           }
         },
         "title": "ReportVerifyRequest",
+        "type": "object"
+      },
+      "ResumeConversationQueueData": {
+        "properties": {
+          "activeMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The currently streaming assistant message id, if a turn is running.",
+            "title": "Activemessageid"
+          },
+          "held": {
+            "description": "False after resume; the queue drains from here.",
+            "title": "Held",
+            "type": "boolean"
+          },
+          "queuedTurns": {
+            "description": "Waiting messages after the resume, in FIFO order.",
+            "items": {
+              "$ref": "#/components/schemas/QueuedMessage"
+            },
+            "title": "Queuedturns",
+            "type": "array"
+          },
+          "revision": {
+            "description": "Queue version after the resume.",
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "held",
+          "revision"
+        ],
+        "title": "ResumeConversationQueueData",
+        "type": "object"
+      },
+      "ResumeConversationQueueResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ResumeConversationQueueData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ResumeConversationQueueResponse",
         "type": "object"
       },
       "ScheduleExpression": {
@@ -3453,6 +3776,44 @@
           }
         },
         "title": "ViewCatalogUpdateRequest",
+        "type": "object"
+      },
+      "WithdrawQueuedMessageData": {
+        "properties": {
+          "id": {
+            "description": "The withdrawn queued message id.",
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Queue version after the withdrawal.",
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "description": "Terminal state after withdrawal (withdrawn).",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "revision"
+        ],
+        "title": "WithdrawQueuedMessageData",
+        "type": "object"
+      },
+      "WithdrawQueuedMessageResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WithdrawQueuedMessageData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WithdrawQueuedMessageResponse",
         "type": "object"
       },
       "Workflow": {
@@ -10329,7 +10690,7 @@
     },
     "/v1/projects/{project_id}/conversations/{chat_id}": {
       "get": {
-        "description": "Show one conversation's metadata and messages.",
+        "description": "Show one conversation's metadata and messages.\n\nIncludes ``activeTurn`` (the currently streaming assistant message, if any),\n``queuedTurns`` (durable waiting messages in FIFO order), and ``queueHeld``\n(true while the queue is paused by a Stop). Use these plus the ``/queue``\nendpoints to observe and manage queued work.",
         "operationId": "show_chat",
         "parameters": [
           {
@@ -10446,7 +10807,7 @@
     },
     "/v1/projects/{project_id}/conversations/{chat_id}/messages": {
       "post": {
-        "description": "Send a follow-up message in an existing conversation and stream the\nagent's reply as Server-Sent Events (same event shapes as conversation\ncreation).",
+        "description": "Send a follow-up message in an existing conversation and stream the\nagent's reply as Server-Sent Events (same event shapes as conversation\ncreation).\n\nIf the conversation is already working on a previous message, ``on_busy``\ndecides what happens: ``queue`` (default) durably enqueues this message to run\nnext \u2014 the stream first emits a ``status`` event with ``message: \"queued\"``\nand its ``queuedMessageId``/``position``, keeps the connection alive with\nheartbeats, then streams the reply once the turn dispatches. ``reject`` returns\na ``conversation_busy`` 409 instead. Send a stable ``idempotency_key`` to make\na retry resume the same queued message. Manage waiting messages with the\n``/queue`` endpoints.",
         "operationId": "reply_to_chat_and_stream",
         "parameters": [
           {
@@ -10490,7 +10851,157 @@
                 }
               }
             },
-            "description": "Server-Sent Events stream of agent activity.\n\nEach event is a UTF-8 line prefixed with `event:`, `id:`, or `data:` per the SSE spec. The `data:` payload is a JSON object with the shape `{\"type\": <event_type>, \"sequence\": <int>, \"data\": <object>}`.\n\nEvent types emitted by the agent:\n- `status` \u2014 high-level progress; `data.message` (queued/running text) or `data.summary` (short status line)\n- `tool.started` \u2014 agent invoked a tool; `data.id`, `data.name`\n- `tool.input` \u2014 tool input arguments; `data.id`, `data.name`, `data.input`\n- `tool.completed` \u2014 tool finished; `data.id`\n- `message.delta` \u2014 incremental assistant text; `data.text` (append in order)\n- `done` \u2014 terminal event; `data.messageId`, `data.content` (final assistant message), `data.status` (`complete` / `error` / `cancelled`)\n\nResumability: when the connection drops before `done`, the same stream can be resumed via `GET /v1/projects/{project_id}/conversations/{chat_id}/messages/{message_id}/events`.\n"
+            "description": "Server-Sent Events stream of agent activity.\n\nEach event is a UTF-8 line prefixed with `event:`, `id:`, or `data:` per the SSE spec. The `data:` payload is a JSON object with the shape `{\"type\": <event_type>, \"sequence\": <int>, \"data\": <object>}`.\n\nEvent types emitted by the agent:\n- `status` \u2014 high-level progress; `data.message` (queued/running text) or `data.summary` (short status line). When the conversation was busy and the message was queued (request field `on_busy: \"queue\"`), the first event is `status` with `data.message: \"queued\"`, `data.queuedMessageId`, `data.position`, and `data.behindMessageId`; the reply then streams once the queued turn dispatches.\n- `queue.updated` \u2014 the message advanced in the queue while it waited; `data.position`, `data.queuedMessageId`\n- `tool.started` \u2014 agent invoked a tool; `data.id`, `data.name`\n- `tool.input` \u2014 tool input arguments; `data.id`, `data.name`, `data.input`\n- `tool.completed` \u2014 tool finished; `data.id`\n- `message.delta` \u2014 incremental assistant text; `data.text` (append in order)\n- `done` \u2014 terminal event; `data.messageId`, `data.content` (final assistant message), `data.status` (`complete` / `error` / `cancelled`)\n- `error` \u2014 terminal error; `data.code`, `data.message`. A queued message may end with `code: \"queue_wait_timeout\"` after 30 minutes of waiting \u2014 the message is still queued and can be observed again via the queue endpoints.\n\nResumability: when the connection drops before `done`, the same stream can be resumed via `GET /v1/projects/{project_id}/conversations/{chat_id}/messages/{message_id}/events`. Before a queued message has bound an assistant message id, reconnect by re-sending with the same `idempotency_key`, or poll `GET /v1/projects/{project_id}/conversations/{chat_id}/queue/{queued_message_id}`.\n"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "402": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "The organization is suspended (trial credits used up, credit limit reached, or plan canceled) and cannot run AI features. An owner or admin restores access from billing settings. Code: `org_suspended`."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Create message and stream response",
+        "tags": [
+          "Conversations"
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/conversations/{chat_id}/messages/{message_id}/cancel": {
+      "post": {
+        "description": "Stop an in-progress analyst reply.\n\nTerminating and irreversible (the partial turn ends), so it requires\n``confirm=true``. Idempotent \u2014 returns ``already_complete``/``already_error``\nif the reply already finished. If the conversation has waiting messages, a\nStop pauses the queue rather than draining it (``queueHeld`` is true); resume\nit with the ``/queue/resume`` endpoint.",
+        "operationId": "cancel_analyst_reply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Set confirm=true to stop the reply. Required.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true to stop the reply. Required.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelReplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
           },
           "400": {
             "content": {
@@ -10570,7 +11081,7 @@
             ]
           }
         ],
-        "summary": "Create message and stream response",
+        "summary": "Cancel analyst reply",
         "tags": [
           "Conversations"
         ]
@@ -10840,6 +11351,510 @@
           }
         ],
         "summary": "Submit message feedback",
+        "tags": [
+          "Conversations"
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/conversations/{chat_id}/queue": {
+      "get": {
+        "description": "List the messages waiting to run in a conversation, in FIFO order.\n\nEach item reports its ``position``, ``state`` (queued/dispatching/dispatched/\nwithdrawn/failed), and, once it has started, the bound ``messageId``. ``held``\nis true while the queue is paused by a Stop; ``revision`` is a monotonic\nversion \u2014 ignore any snapshot older than one you already hold.",
+        "operationId": "list_conversation_queue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationQueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "List queued messages",
+        "tags": [
+          "Conversations"
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/conversations/{chat_id}/queue/resume": {
+      "post": {
+        "description": "Resume a conversation's queue after a Stop paused it.\n\nClears the hold and lets waiting messages drain from the head. Idempotent:\nresuming an already-running queue simply returns the current snapshot with a\nbumped ``revision``.",
+        "operationId": "resume_conversation_queue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeConversationQueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Resume queued messages",
+        "tags": [
+          "Conversations"
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/conversations/{chat_id}/queue/{queued_message_id}": {
+      "delete": {
+        "description": "Withdraw a message that is still waiting, before it runs.\n\nRequires ``confirm=true``. If the message already started, this returns a\n``queued_message_already_dispatched`` conflict carrying its ``messageId`` so\nyou can read the reply instead. Withdrawing an already-withdrawn message is a\nno-op success.",
+        "operationId": "withdraw_queued_message",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "queued_message_id",
+            "required": true,
+            "schema": {
+              "title": "Queued Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Set confirm=true to withdraw the queued message. Required.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Set confirm=true to withdraw the queued message. Required.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawQueuedMessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:write"
+            ]
+          }
+        ],
+        "summary": "Withdraw queued message",
+        "tags": [
+          "Conversations"
+        ]
+      },
+      "get": {
+        "description": "Show one queued message, including its terminal binding.\n\nA queued message can dispatch and finish before you poll; the detail still\nreturns its bound ``messageId`` so you can read the reply. This is the durable\nway to reconnect to a queued message before it has produced an assistant\nmessage id.",
+        "operationId": "show_queued_message",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "queued_message_id",
+            "required": true,
+            "schema": {
+              "title": "Queued Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuedMessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": [
+              "agent:read"
+            ]
+          }
+        ],
+        "summary": "Show queued message",
         "tags": [
           "Conversations"
         ]

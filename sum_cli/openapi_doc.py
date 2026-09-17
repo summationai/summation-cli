@@ -587,7 +587,7 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     ),
     "tenant": "Organization and tenant metadata.",
     "projects": "Manage projects.",
-    "chats": "Chats (Addison conversations).",
+    "chats": "Chats (Addison conversations), including the durable follow-up queue.",
     "reports": "Generate and verify reports (.sdoc). List/download/delete via files.",
     "playbooks": "Playbook discovery.",
     "schedules": "Recurring playbook schedules and their runs.",
@@ -740,7 +740,7 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
 # CLI flags the OpenAPI summary does not mention.
 _STREAMING_ACTION_SUFFIXES: dict[tuple[str, str], str] = {
     ("chats", "create"): " (--wait/--no-wait, --follow streams NDJSON).",
-    ("chats", "reply"): " (--wait/--no-wait, --follow).",
+    ("chats", "reply"): " (--wait/--no-wait, --follow; --on-busy queue|reject).",
     ("chats", "events"): " (always streams NDJSON; --raw-sse optional).",
     ("reports", "generate"): " (--wait/--no-wait, --follow).",
     ("grid", "push"): " (--wait/--no-wait, --follow).",

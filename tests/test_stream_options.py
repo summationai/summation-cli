@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from sum_cli.cli.main import app
-from sum_cli.stream_options import validate_wait_follow
+from sum_cli.stream_options import post_with_wait_follow, validate_wait_follow
 
 runner = CliRunner()
 
@@ -234,3 +234,26 @@ def test_chats_create_stream_error_is_top_level_failure(monkeypatch: pytest.Monk
     assert body["error"]["code"] == "upstream_api_error"
     # Structured data is preserved as JSON, not a stringified Python dict (#3).
     assert body["error"]["data"]["code"] == "upstream_api_error"
+
+
+def test_post_with_wait_follow_forwards_queue_state() -> None:
+    """The queue observation must reach the stream, or a queued reply reports nothing."""
+    from sum_cli.streaming import QueueObservation
+
+    state = QueueObservation()
+    resp = MagicMock()
+    stream_cm = MagicMock()
+    stream_cm.__enter__.return_value = resp
+    stream_cm.__exit__.return_value = None
+    client = MagicMock()
+    client.stream.return_value = stream_cm
+
+    with patch(
+        "sum_cli.stream_options.stream_sse_response",
+        return_value={"ok": True, "result": {}},
+    ) as streamer:
+        post_with_wait_follow(
+            client, "POST", "/v1/x", wait=True, follow=False, queue_state=state
+        )
+
+    assert streamer.call_args.kwargs["queue_state"] is state

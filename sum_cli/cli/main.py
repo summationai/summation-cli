@@ -117,6 +117,54 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+# Structured members sum-api adds to a problem+json body so a caller can recover:
+# the message that is still running, the queue receipt that already started, the
+# cap that was hit. They are IDs and numbers, never prose — carry them through as
+# `error.data` instead of letting the envelope reduce them to a sentence.
+_RECOVERY_MEMBERS = (
+    "activeMessageId",
+    "queuedMessageId",
+    "messageId",
+    "userMessageId",
+    "limit",
+)
+
+# Per-code recovery guidance for the durable conversation queue. Without these a
+# queue conflict falls through to the generic auth/params advice, which sends the
+# caller to `auth whoami` for a problem that has nothing to do with credentials.
+_QUEUE_ERROR_FIXES: dict[str, str] = {
+    "conversation_busy": (
+        "The chat is still answering error.data.activeMessageId. Re-send with "
+        "--on-busy queue to wait your turn, or stop it with `sumcli chats cancel "
+        "--message <id> --confirm`."
+    ),
+    "conversation_queue_full": (
+        "The chat already has the maximum number of waiting messages. Inspect them with "
+        "`sumcli chats queue-list --chat <chat-id>` and withdraw one, or wait."
+    ),
+    "conversation_queue_held": (
+        "The queue is paused by a Stop. Release it with `sumcli chats queue-resume "
+        "--chat <chat-id>`, then re-send."
+    ),
+    "queued_message_already_dispatched": (
+        "The queued message already started, so it cannot be withdrawn. Read its reply "
+        "with `sumcli chats events --message <error.data.messageId>`."
+    ),
+    "queued_message_dispatching": (
+        "The queued message is starting right now. Re-read it with `sumcli chats "
+        "queue-show --chat <chat-id> --queued-message <id>` and retry."
+    ),
+}
+
+
+def _api_error_data(body: object) -> dict | None:
+    """Recovery IDs from a problem+json body, or None when it carries none."""
+    if not isinstance(body, dict):
+        return None
+    data = {key: body[key] for key in _RECOVERY_MEMBERS if body.get(key) is not None}
+    return data or None
+
+
 def _api_error_fields(body: object) -> tuple[str, str]:
     message = str(body)
     code = "API_ERROR"
@@ -129,6 +177,18 @@ def _api_error_fields(body: object) -> tuple[str, str]:
 
 
 def _api_error_guidance(*, status: int, code: str, message: str) -> tuple[str, list]:
+    queue_fix = _QUEUE_ERROR_FIXES.get(code)
+    if queue_fix is not None:
+        return (
+            queue_fix,
+            [
+                action(
+                    "List queued messages",
+                    "sumcli chats queue-list --chat <chat-id>",
+                    params={"chat-id": param("Chat ID")},
+                )
+            ],
+        )
     if "service principal not found" in message.casefold():
         return (
             "Token exchange worked, but sum-api cannot resolve this M2M client in Stytch "
@@ -170,7 +230,7 @@ def _api_error_guidance(*, status: int, code: str, message: str) -> tuple[str, l
 def _api_error_envelope(exc: ApiError) -> dict:
     code, message = _api_error_fields(exc.body)
     fix, next_actions = _api_error_guidance(status=exc.status, code=code, message=message)
-    return err(code, message, fix, next_actions=next_actions)
+    return err(code, message, fix, next_actions=next_actions, data=_api_error_data(exc.body))
 
 
 @app.callback(invoke_without_command=True)

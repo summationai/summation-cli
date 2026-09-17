@@ -7,6 +7,7 @@ from sum_cli.openapi_doc import (
     allowlisted_operations_now_covered,
     cli_call_sites_missing_confirm,
     cli_paths_missing_from_spec,
+    iter_operations,
     load_spec,
     uncovered_spec_operations,
 )
@@ -61,3 +62,30 @@ def test_allowlist_has_no_entries_the_cli_now_covers() -> None:
         "Allow-list entries name operations sumcli now calls; delete them:\n"
         + "\n".join(f"  {op.method} {op.path}" for op in stale)
     )
+
+
+def test_snapshot_documents_the_durable_queue_routes() -> None:
+    """The queue commands ship only against a snapshot that actually has them.
+
+    The snapshot is refreshed from live ``/openapi.json`` (scripts/refresh_openapi.py),
+    so this is also the guard that a refresh taken before sum-api's queue contract
+    deployed cannot silently drop the routes these commands call — the failure would
+    otherwise surface as a CLI that 404s in the field.
+    """
+    spec_keys = {op.key for op in iter_operations(load_spec())}
+    conversation = "/v1/projects/*/conversations/*"
+    for key in (
+        ("GET", f"{conversation}/queue"),
+        ("GET", f"{conversation}/queue/*"),
+        ("DELETE", f"{conversation}/queue/*"),
+        ("POST", f"{conversation}/queue/resume"),
+        ("POST", f"{conversation}/messages/*/cancel"),
+    ):
+        assert key in spec_keys, f"OpenAPI snapshot is missing {key[0]} {key[1]}"
+
+
+def test_reply_request_documents_on_busy_and_idempotency_key() -> None:
+    """``chats reply`` sends both fields; a contract without them is a silent 422."""
+    schema = load_spec()["components"]["schemas"]["ChatMessageRequest"]["properties"]
+    assert set(schema["on_busy"]["enum"]) == {"queue", "reject"}
+    assert "idempotency_key" in schema

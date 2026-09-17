@@ -70,3 +70,58 @@ def test_queries_run_requires_sql_or_file(monkeypatch) -> None:
     assert result.exit_code == 1
     body = json.loads(result.stdout)
     assert body["error"]["code"] == "INVALID_REQUEST"
+
+
+def _problem_envelope(body: dict, status: int = 409) -> dict:
+    """Render an ApiError the way main() does, without a live HTTP call."""
+    from sum_cli.cli.main import _api_error_envelope
+    from sum_cli.client import ApiError
+
+    return _api_error_envelope(ApiError(status, body))
+
+
+def test_conversation_busy_keeps_the_active_message_id_and_queue_guidance() -> None:
+    """The recovery ID must survive as structured data, not be flattened into prose."""
+    envelope = _problem_envelope(
+        {
+            "code": "conversation_busy",
+            "detail": "Addison is still working on the previous message.",
+            "status": 409,
+            "activeMessageId": "msg_running",
+        }
+    )
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "conversation_busy"
+    assert envelope["error"]["data"] == {"activeMessageId": "msg_running"}
+    # Not the generic credentials advice a 409 would otherwise get.
+    assert "--on-busy queue" in envelope["fix"]
+    assert "auth whoami" not in envelope["fix"]
+
+
+def test_queue_full_keeps_the_limit() -> None:
+    envelope = _problem_envelope(
+        {"code": "conversation_queue_full", "detail": "Queue is full.", "limit": 5}
+    )
+    assert envelope["error"]["data"] == {"limit": 5}
+    assert "queue-list" in envelope["fix"]
+
+
+def test_already_dispatched_withdrawal_points_at_the_bound_reply() -> None:
+    envelope = _problem_envelope(
+        {
+            "code": "queued_message_already_dispatched",
+            "detail": "This queued message already started.",
+            "messageId": "msg_7",
+            "userMessageId": "msg_6",
+        }
+    )
+    assert envelope["error"]["data"] == {"messageId": "msg_7", "userMessageId": "msg_6"}
+    assert "chats events" in envelope["fix"]
+
+
+def test_non_queue_errors_keep_their_existing_envelope() -> None:
+    envelope = _problem_envelope(
+        {"code": "unauthenticated", "detail": "Token rejected."}, status=401
+    )
+    assert "error" in envelope and "data" not in envelope["error"]
+    assert "auth login" in envelope["fix"]
