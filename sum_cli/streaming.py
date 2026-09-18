@@ -21,7 +21,6 @@ _DISPATCH_EVENTS = frozenset(
 )
 
 
-
 def event_data(payload: dict[str, Any]) -> dict[str, Any]:
     """Return an SSE frame's own fields, unwrapping the public envelope.
 

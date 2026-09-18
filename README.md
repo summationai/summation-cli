@@ -507,7 +507,10 @@ Per-PR CI gates on the offline contract tests above only. Production reconciliat
 > a route the snapshot does not document. Until sum-api deploys, the scheduled
 > `--check` reconciliation will report these as differences. Re-run
 > `python scripts/refresh_openapi.py` against production before tagging a release that
-> ships the `chats queue-*` commands.
+> ships the `chats queue-*` commands. This is enforced, not just documented:
+> `tests/test_release_gating.py` pins `__version__` while anything is listed in its
+> `STAGED_OPERATIONS`, and releases are version-gated — so a bump PR goes red until
+> the snapshot is refreshed from production and that list is emptied.
 
 Command-tree action blurbs for API-backed commands are derived from the snapshot at runtime via `sum_cli/openapi_doc.py`; `config` and other local-only actions stay hand-written there. Composite commands (`tables import`, `reports verify`) have known doc/route alignment gaps — see comments in `openapi_doc.py`.
 
