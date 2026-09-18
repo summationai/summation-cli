@@ -72,3 +72,22 @@ def test_typer_help_uses_openapi_action_blurbs():
             assert _help_text(blurb) in _help_text(cmd.stdout), (
                 f"{resource} {action}: missing blurb in command help"
             )
+
+
+def test_queue_commands_get_real_openapi_blurbs():
+    """Flat `chats queue-*` names keep discovery working.
+
+    `registered_typer_actions` walks resource -> action only, so a nested `chats
+    queue <verb>` sub-group would appear in the tree as a single bare "queue" entry
+    with its verbs invisible and no spec summary behind it. These commands are named
+    flat (the convention `connections app-*` and `verification-tests list-*` already
+    follow), so each one resolves to its own OpenAPI operation. Assert the blurbs are
+    the spec's, not the `action.replace("-", " ")` fallback a missing call site yields.
+    """
+    actions = build_resources()["chats"]["actions"]
+    for name in ("queue-list", "queue-show", "queue-withdraw", "queue-resume", "cancel"):
+        assert name in actions, f"chats {name} missing from the command tree"
+        assert actions[name] != name.replace("-", " "), (
+            f"chats {name} fell back to its own name; the OpenAPI call site did not resolve"
+        )
+    assert "queue" not in actions, "a nested `chats queue` group would hide its verbs"

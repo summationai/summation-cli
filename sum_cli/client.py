@@ -30,6 +30,11 @@ class ApiError(RuntimeError):
         self.body = body
         self.method = method
         self.url = url
+        # Set by a caller that sent an idempotency-keyed request whose outcome this
+        # error leaves unknown (a 5xx after sum-api already forwarded the send). It
+        # is the CLI's own value, never something the server returned, so it is kept
+        # beside the body rather than mixed into it.
+        self.idempotency_key: str | None = None
 
 
 def _token_cache_key(cfg: Config) -> tuple:
@@ -79,6 +84,13 @@ class Client:
         self.cfg = cfg or load()
         self.intent = intent
         self._http = httpx.Client(timeout=30.0, headers={"User-Agent": user_agent()})
+        # Streaming sends wait for response headers while sum-api durably accepts
+        # the message; its own budget for that is 60s (AGENT_PROXY_TIMEOUT_SECONDS).
+        # A 30s client read timeout would abandon sends the server goes on to
+        # accept, turning a slow admission into a recovery the caller has to reason
+        # about. Give the read phase room past the server's own limit; heartbeats
+        # keep a live stream well inside it.
+        self._stream_timeout = httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
 
     @classmethod
     def clear_token_cache(cls) -> None:
@@ -204,6 +216,7 @@ class Client:
             params=params,
             json=json,
             headers=self._headers(headers),
+            timeout=self._stream_timeout,
         ) as resp:
             if resp.status_code >= 400:
                 resp.read()

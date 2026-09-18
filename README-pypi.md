@@ -60,7 +60,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always co
 | `config`      | Profiles, active session, and `~/.summation/summation-config` (`use`, `set-project`, `import-env`, …)                                                |
 | `tenant`      | Organization and tenant metadata                                                                                                                     |
 | `projects`    | Project CRUD and `current`                                                                                                                           |
-| `chats`       | Addison conversations; SSE → NDJSON with `--follow` on create/reply                                                                                  |
+| `chats`       | Addison conversations; SSE → NDJSON with `--follow` on create/reply; durable follow-up queue (`queue-*`) and `cancel`                                |
 | `reports`     | Generate and verify reports (`.sdoc`); file ops via `files`                                                                                          |
 | `playbooks`   | Playbook discovery                                                                                                                                   |
 | `schedules`   | Recurring playbook runs (`list`, `show`, `create`, `update`, `delete`, `pause`, `resume`, `run`, `runs`); create may require workflows                |
@@ -284,7 +284,7 @@ Project-scoped commands accept `--project` when no default project is configured
 
 ## Behavior
 
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`, `chats cancel`, `chats queue-withdraw`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).
@@ -321,6 +321,30 @@ sumcli chats create -m "hello" --follow              # wait, NDJSON stream
 ```
 
 `tables import` takes `--wait`/`--no-wait` but has no `--follow`; it streams NDJSON whenever it waits. `chats events` always streams NDJSON (`--raw-sse` optional).
+
+### Queued follow-ups
+
+A chat runs one turn at a time. `chats reply --on-busy queue` (the default) durably
+enqueues a follow-up sent while Addison is still working, and streams its reply once
+the turn starts; `--on-busy reject` fails immediately with `conversation_busy`. Up to
+**five** messages can wait per chat.
+
+```bash
+sumcli chats reply --chat chat-... -m "Compare Q3"                   # queue if busy
+sumcli chats reply --chat chat-... -m "Compare Q3" --on-busy reject    # fail if busy
+sumcli chats queue-list --chat chat-...
+sumcli chats queue-show --chat chat-... --queued-message qt-...
+sumcli chats queue-withdraw --chat chat-... --queued-message qt-... --confirm
+sumcli chats queue-resume --chat chat-...
+sumcli chats cancel --chat chat-... --message msg-... --confirm
+```
+
+`chats reply` sends one generated `idempotency_key` per invocation so a retry cannot
+enqueue the message twice; pass `--idempotency-key` to recover an earlier send.
+`chats cancel` stops the running reply and **pauses** the backlog (`queueHeld: true`) —
+release it with `chats queue-resume`. A `queued` status is progress, not an answer: if
+the stream ends while a message is still waiting, the CLI exits **1** with
+`QUEUE_INCOMPLETE` and the `queuedMessageId` to resume from.
 
 ### Streaming and exit codes
 

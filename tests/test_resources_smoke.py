@@ -87,6 +87,12 @@ def test_config_set_project_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
             id="chats-list",
         ),
         pytest.param(
+            ["chats", "queue-list", "--project", "proj_1", "--chat", "chat_1"],
+            "sum_cli.resources.chats",
+            {"data": {"items": [], "held": False, "revision": 0}},
+            id="chats-queue-list",
+        ),
+        pytest.param(
             ["playbooks", "list", "--project", "proj_1"],
             "sum_cli.resources.playbooks",
             {"data": []},
