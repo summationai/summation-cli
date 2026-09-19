@@ -56,6 +56,7 @@ class CliContext:
     base_url: str | None
     verbose: bool = False
     intent: str | None = None
+    resolved_org: str | None = None
 
     def config(self, *, profile: str | None = None) -> Config:
         return load(profile=profile or self.profile, base_url=self.base_url)
@@ -219,6 +220,14 @@ def _root(
         "without it a run cannot be joined to a goal, and sumcli warns on "
         'stderr. Example: --intent "convert my weekly recap".',
     ),
+    org: str = typer.Option(  # noqa: B008
+        None,
+        "--org",
+        envvar="SUMCLI_ORG",
+        help="Act in this organization instead of your home org. Internal multi-tenant "
+        "operators only; sum-api refuses it for anyone else. List the orgs you can target "
+        "with `sumcli tenants list`, or set a default with `sumcli tenants use <org_id>`.",
+    ),
 ) -> None:
     debug_log.set_verbose(verbose)
     # `output` is resolved by its eager callback (_output_callback) before this body
@@ -228,7 +237,11 @@ def _root(
     # point a command actually calls sum-api — this callback also runs for
     # discovery and --help, which must never be refused.
     ctx.obj = CliContext(
-        profile=profile, base_url=base_url, verbose=verbose, intent=resolve_intent(intent)
+        profile=profile,
+        base_url=base_url,
+        verbose=verbose,
+        intent=resolve_intent(intent),
+        resolved_org=org,
     )
     # Verification bundle validation and mutation dry-runs are deliberately
     # network-free. Skip the opportunistic PyPI update check for this resource

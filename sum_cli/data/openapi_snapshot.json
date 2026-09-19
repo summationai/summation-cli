@@ -16454,6 +16454,91 @@
         ]
       }
     },
+    "/v1/tenant/orgs": {
+      "get": {
+        "description": "List the organizations the caller may act in.\n\nAn internal multi-tenant operator sees every tenant; every other caller sees exactly their own organization. Pair a returned ``org_id`` with the ``x-summation-resolved-org`` request header to target that tenant on a later call. Minimal fields only.",
+        "operationId": "list_tenant_orgs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Invalid request or unsupported option."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Missing, invalid, or expired credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Authenticated but missing the required scope."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Resource not found or not accessible."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemError"
+                }
+              }
+            },
+            "description": "Internal server error."
+          }
+        },
+        "security": [
+          {
+            "SummationMachineAuth": []
+          }
+        ],
+        "summary": "List organizations",
+        "tags": [
+          "Tenant"
+        ]
+      }
+    },
     "/v1/verification-tests": {
       "get": {
         "description": "List custom definitions for the effective target organization, with an optional\nsubject-family filter and a bounded public page.",

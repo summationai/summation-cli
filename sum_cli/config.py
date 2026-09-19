@@ -31,6 +31,9 @@ class Config:
     file_access_token: str | None = None
     file_device_login_credential: str | None = None
     token_expires_at: float | None = None
+    # Persisted default target org, set by `tenants use`. The root --org / SUMCLI_ORG override
+    # (resolved at the CLI layer) wins over this; it is a convenience default, not a credential.
+    resolved_org: str | None = None
 
     @property
     def has_m2m(self) -> bool:
@@ -99,6 +102,7 @@ def load(
         m2m_scope=file_values.get("m2m_scope"),
         profile=resolved_profile,
         default_project=file_values.get("default_project") or env.get("SUMMATION_PROJECT"),
+        resolved_org=file_values.get("resolved_org"),
         source=",".join(sources) if sources else "defaults",
         file_access_token=file_access_token,
         file_device_login_credential=file_device_login_credential,

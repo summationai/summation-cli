@@ -106,9 +106,17 @@ def checked_intent(ctx: typer.Context) -> str | None:
     return intent
 
 
+def resolved_org(ctx: typer.Context, cfg: Config) -> str | None:
+    """The org to act in: the root --org / SUMCLI_ORG override wins, else the profile default
+    persisted by `tenants use`, else none (act in the home org)."""
+    override = getattr(getattr(ctx, "obj", None), "resolved_org", None)
+    return override or cfg.resolved_org
+
+
 @contextmanager
 def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
-    client = Client(cfg=get_config(ctx, profile), intent=checked_intent(ctx))
+    cfg = get_config(ctx, profile)
+    client = Client(cfg=cfg, intent=checked_intent(ctx), resolved_org=resolved_org(ctx, cfg))
     try:
         yield client
     finally:
