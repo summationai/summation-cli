@@ -235,3 +235,31 @@ def test_client_sends_user_agent(monkeypatch):
         assert client._http.headers["user-agent"] == f"sumcli/{__version__} (claude-plugin/0.4.0)"
     finally:
         client.close()
+
+
+def _cfg(**overrides: object) -> Config:
+    base = dict(
+        base_url="https://example.com",
+        access_token="tok",
+        device_login_credential=None,
+        client_id=None,
+        client_secret=None,
+        m2m_scope=None,
+        profile="default",
+        default_project=None,
+        source="test",
+    )
+    base.update(overrides)
+    return Config(**base)  # type: ignore[arg-type]
+
+
+def test_resolved_org_header_sent_when_set(monkeypatch) -> None:
+    client = Client(_cfg(), resolved_org="organization-live-abc")
+    monkeypatch.setattr(client, "_token_result", lambda: MagicMock(access_token="tok"))
+    assert client._headers()["x-summation-resolved-org"] == "organization-live-abc"
+
+
+def test_resolved_org_header_absent_by_default(monkeypatch) -> None:
+    client = Client(_cfg())
+    monkeypatch.setattr(client, "_token_result", lambda: MagicMock(access_token="tok"))
+    assert "x-summation-resolved-org" not in client._headers()

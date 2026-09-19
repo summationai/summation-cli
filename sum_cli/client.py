@@ -15,6 +15,10 @@ from sum_cli.auth import TokenResult, acquire_token, token_cache_valid
 from sum_cli.config import Config, load
 from sum_cli.intent import INTENT_HEADER, encode_intent_header, intent_disabled
 
+# Names the org an internal multi-tenant operator wants to act in, per request. sum-api enforces the
+# entitlement server-side, so a non-operator sending it only ever reaches their own org.
+RESOLVED_ORG_HEADER = "x-summation-resolved-org"
+
 
 class ApiError(RuntimeError):
     def __init__(
@@ -75,9 +79,19 @@ def user_agent() -> str:
 class Client:
     _token_cache: dict[tuple, TokenResult] = {}
 
-    def __init__(self, cfg: Config | None = None, *, intent: str | None = None):
+    def __init__(
+        self,
+        cfg: Config | None = None,
+        *,
+        intent: str | None = None,
+        resolved_org: str | None = None,
+    ):
         self.cfg = cfg or load()
         self.intent = intent
+        # The org to act in when it differs from the caller's home org. sum-api honors it only for
+        # internal multi-tenant operators (re-checked server-side); for anyone else it is a no-op or
+        # a 403, so sending it is always safe.
+        self.resolved_org = resolved_org
         self._http = httpx.Client(timeout=30.0, headers={"User-Agent": user_agent()})
 
     @classmethod
@@ -115,6 +129,8 @@ class Client:
         h = {"Authorization": f"Bearer {self._token_result().access_token}"}
         if self.intent and not intent_disabled():
             h[INTENT_HEADER] = encode_intent_header(self.intent)
+        if self.resolved_org:
+            h[RESOLVED_ORG_HEADER] = self.resolved_org
         if extra:
             h.update(extra)
         return h
