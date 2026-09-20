@@ -202,6 +202,23 @@ def test_timeout_error_tells_caller_to_relist(monkeypatch) -> None:
     assert "SUMCLI_TIMEOUT" in body["fix"]
 
 
+@pytest.mark.parametrize("value", ["0", "5000"])
+def test_out_of_range_timeout_is_invalid_request(monkeypatch, value) -> None:
+    monkeypatch.delenv("SUMCLI_TIMEOUT", raising=False)
+    monkeypatch.setattr(sys, "argv", ["sumcli", "--timeout", value, "projects", "list"])
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    body = json.loads(buf.getvalue())
+    assert body["ok"] is False
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "3600" in body["error"]["message"]
+    assert "--timeout" in body["fix"]
+
+
 def test_auth_error_envelope(monkeypatch, tmp_path) -> None:
     cfg_file = tmp_path / "config"
     cfg_file.write_text("")

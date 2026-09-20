@@ -9,8 +9,9 @@ import typer
 
 from sum_cli import __version__, debug_log
 from sum_cli.auth import AuthError
-from sum_cli.client import ApiError
+from sum_cli.client import ApiError, resolve_http_timeout
 from sum_cli.config import Config, load
+from sum_cli.constants import MAX_HTTP_TIMEOUT_SECONDS
 from sum_cli.intent import resolve_intent
 from sum_cli.openapi_doc import (
     OpenApiSpecError,
@@ -23,6 +24,7 @@ from sum_cli.output import (
     emit,
     emit_error,
     err,
+    invalid_request,
     param,
     resolve_output_mode,
     set_output_mode,
@@ -102,6 +104,25 @@ def _output_callback(value: OutputChoice | None) -> OutputChoice | None:
     """
     set_output_mode(resolve_output_mode(value.value if value else None))
     return value
+
+
+def _timeout_callback(value: float | None) -> float | None:
+    """Range-check --timeout / SUMCLI_TIMEOUT at parse time.
+
+    Click already rejects non-numeric values. Out-of-range is bad input too, so
+    it must surface as INVALID_REQUEST, not as INTERNAL_ERROR from the catch-all
+    in main() with "retry" advice that can never succeed.
+    """
+    if value is None:
+        return None
+    try:
+        return resolve_http_timeout(value)
+    except ValueError as e:
+        invalid_request(
+            str(e),
+            "Pass --timeout (or set SUMCLI_TIMEOUT) a positive number of seconds, "
+            f"at most {int(MAX_HTTP_TIMEOUT_SECONDS)}, placed before the subcommand.",
+        )
 
 
 def _version_callback(value: bool) -> None:
@@ -224,6 +245,7 @@ def _root(
         None,
         "--timeout",
         envvar="SUMCLI_TIMEOUT",
+        callback=_timeout_callback,
         help="HTTP timeout in seconds for sum-api calls (default 120). "
         "Place before the subcommand. grid create / tables upsert often "
         "need more than 30s; a timeout is not proof the write failed.",

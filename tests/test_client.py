@@ -229,9 +229,12 @@ def test_http_timeout_env_and_explicit(monkeypatch):
     monkeypatch.setenv("SUMCLI_TIMEOUT", "45")
     assert resolve_http_timeout() == 45.0
     assert resolve_http_timeout(90) == 90.0
-    timeout = build_http_timeout(5)
+    timeout = build_http_timeout(5.0)
     assert timeout.read == 5.0
     assert timeout.connect == 5.0
+    timeout = build_http_timeout(120.0)
+    assert timeout.read == 120.0
+    assert timeout.connect == 10.0
 
 
 def test_http_timeout_rejects_invalid(monkeypatch):

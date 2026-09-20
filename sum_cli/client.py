@@ -35,8 +35,8 @@ def resolve_http_timeout(explicit: float | None = None) -> float:
     return value
 
 
-def build_http_timeout(seconds: float | None = None) -> httpx.Timeout:
-    read = resolve_http_timeout(seconds)
+def build_http_timeout(read: float) -> httpx.Timeout:
+    """httpx budget for an already-resolved read timeout. Connect stays short."""
     return httpx.Timeout(read, connect=min(DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS, read))
 
 
