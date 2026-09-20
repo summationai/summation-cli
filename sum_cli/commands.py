@@ -108,15 +108,24 @@ def checked_intent(ctx: typer.Context) -> str | None:
 
 def resolved_org(ctx: typer.Context, cfg: Config) -> str | None:
     """The org to act in: the root --org / SUMCLI_ORG override wins, else the profile default
-    persisted by `tenants use`, else none (act in the home org)."""
+    persisted by `tenant use`, else none (act in the home org)."""
     override = getattr(getattr(ctx, "obj", None), "resolved_org", None)
     return override or cfg.resolved_org
 
 
 @contextmanager
-def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
+def api_client(
+    ctx: typer.Context,
+    profile: str | None = None,
+    *,
+    include_resolved_org: bool = True,
+) -> Iterator[Client]:
+    """A client for the active profile. Pass ``include_resolved_org=False`` for calls that must run
+    as the caller's home identity (org discovery), so a stale or now-invalid override cannot lock the
+    user out of the very command that lists a valid target."""
     cfg = get_config(ctx, profile)
-    client = Client(cfg=cfg, intent=checked_intent(ctx), resolved_org=resolved_org(ctx, cfg))
+    target_org = resolved_org(ctx, cfg) if include_resolved_org else None
+    client = Client(cfg=cfg, intent=checked_intent(ctx), resolved_org=target_org)
     try:
         yield client
     finally:

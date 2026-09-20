@@ -226,7 +226,9 @@ def _root(
         envvar="SUMCLI_ORG",
         help="Act in this organization instead of your home org. Internal multi-tenant "
         "operators only; sum-api refuses it for anyone else. List the orgs you can target "
-        "with `sumcli tenants list`, or set a default with `sumcli tenants use <org_id>`.",
+        "with `sumcli tenant list`, or set a default with `sumcli tenant use <org_id>`. "
+        "SUMCLI_ORG applies across profiles, so an org that is valid in one environment "
+        "yields an unknown-org 401 in another; prefer `sumcli tenant use` to pin it per profile.",
     ),
 ) -> None:
     debug_log.set_verbose(verbose)

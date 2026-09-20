@@ -31,7 +31,7 @@ class Config:
     file_access_token: str | None = None
     file_device_login_credential: str | None = None
     token_expires_at: float | None = None
-    # Persisted default target org, set by `tenants use`. The root --org / SUMCLI_ORG override
+    # Persisted default target org, set by `tenant use`. The root --org / SUMCLI_ORG override
     # (resolved at the CLI layer) wins over this; it is a convenience default, not a credential.
     resolved_org: str | None = None
 
