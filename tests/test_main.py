@@ -177,6 +177,48 @@ def test_network_error_envelope(monkeypatch) -> None:
     assert "online" in body["fix"]
 
 
+def test_timeout_error_tells_caller_to_relist(monkeypatch) -> None:
+    mock_client = MagicMock()
+    mock_client.request.side_effect = httpx.ReadTimeout("The read operation timed out")
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_client
+    mock_cm.__exit__.return_value = None
+
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setattr(sys, "argv", ["sumcli", "projects", "list"])
+
+    buf = io.StringIO()
+    with patch("sum_cli.resources.projects.api_client", return_value=mock_cm):
+        with redirect_stdout(buf):
+            with pytest.raises(SystemExit) as exc:
+                main()
+    assert exc.value.code == 1
+    body = json.loads(buf.getvalue())
+    assert body["ok"] is False
+    assert body["error"]["code"] == "NETWORK_ERROR"
+    assert "timed out" in body["error"]["message"]
+    assert "re-list" in body["fix"]
+    assert "SUMCLI_TIMEOUT" in body["fix"]
+
+
+@pytest.mark.parametrize("value", ["0", "5000"])
+def test_out_of_range_timeout_is_invalid_request(monkeypatch, value) -> None:
+    monkeypatch.delenv("SUMCLI_TIMEOUT", raising=False)
+    monkeypatch.setattr(sys, "argv", ["sumcli", "--timeout", value, "projects", "list"])
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    body = json.loads(buf.getvalue())
+    assert body["ok"] is False
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "3600" in body["error"]["message"]
+    assert "--timeout" in body["fix"]
+
+
 def test_auth_error_envelope(monkeypatch, tmp_path) -> None:
     cfg_file = tmp_path / "config"
     cfg_file.write_text("")

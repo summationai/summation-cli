@@ -13,7 +13,31 @@ import httpx
 from sum_cli import __version__, debug_log
 from sum_cli.auth import TokenResult, acquire_token, token_cache_valid
 from sum_cli.config import Config, load
+from sum_cli.constants import (
+    DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
+    MAX_HTTP_TIMEOUT_SECONDS,
+)
 from sum_cli.intent import INTENT_HEADER, encode_intent_header, intent_disabled
+
+
+def resolve_http_timeout(explicit: float | None = None) -> float:
+    """Seconds for sum-api read/write. ``explicit`` wins, then ``SUMCLI_TIMEOUT``."""
+    if explicit is None:
+        raw = os.environ.get("SUMCLI_TIMEOUT", "").strip()
+        value = float(raw) if raw else DEFAULT_HTTP_TIMEOUT_SECONDS
+    else:
+        value = float(explicit)
+    if value <= 0 or value > MAX_HTTP_TIMEOUT_SECONDS:
+        raise ValueError(
+            f"HTTP timeout must be in (0, {int(MAX_HTTP_TIMEOUT_SECONDS)}] seconds, got {value}"
+        )
+    return value
+
+
+def build_http_timeout(read: float) -> httpx.Timeout:
+    """httpx budget for an already-resolved read timeout. Connect stays short."""
+    return httpx.Timeout(read, connect=min(DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS, read))
 
 
 class ApiError(RuntimeError):
@@ -75,10 +99,20 @@ def user_agent() -> str:
 class Client:
     _token_cache: dict[tuple, TokenResult] = {}
 
-    def __init__(self, cfg: Config | None = None, *, intent: str | None = None):
+    def __init__(
+        self,
+        cfg: Config | None = None,
+        *,
+        intent: str | None = None,
+        timeout: float | None = None,
+    ):
         self.cfg = cfg or load()
         self.intent = intent
-        self._http = httpx.Client(timeout=30.0, headers={"User-Agent": user_agent()})
+        self.timeout = resolve_http_timeout(timeout)
+        self._http = httpx.Client(
+            timeout=build_http_timeout(self.timeout),
+            headers={"User-Agent": user_agent()},
+        )
 
     @classmethod
     def clear_token_cache(cls) -> None:

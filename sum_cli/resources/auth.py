@@ -17,7 +17,14 @@ from sum_cli.auth import (
     start_device_login,
 )
 from sum_cli.client import Client
-from sum_cli.commands import ProfileOption, api_client, checked_intent, get_config, unwrap_data
+from sum_cli.commands import (
+    ProfileOption,
+    api_client,
+    checked_intent,
+    client_timeout,
+    get_config,
+    unwrap_data,
+)
 from sum_cli.config_store import redact
 from sum_cli.output import action, emit, emit_error, err, ok
 
@@ -252,7 +259,7 @@ def show_token(
     profile: ProfileOption = None,
 ) -> None:
     cfg = get_config(ctx, profile)
-    with Client(cfg, intent=checked_intent(ctx)) as c:
+    with Client(cfg, intent=checked_intent(ctx), timeout=client_timeout(ctx)) as c:
         token = c.token()
     if raw:
         # Bare token on stdout, no envelope, so $(...) captures a usable credential.
