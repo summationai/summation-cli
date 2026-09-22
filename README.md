@@ -499,13 +499,13 @@ python scripts/refresh_openapi.py --base-url https://sandbox-api.summation.com
 python scripts/refresh_openapi.py --check --base-url https://sandbox-api.summation.com
 ```
 
-The committed snapshot currently tracks **sandbox**, not production: `row_format` is live on `sandbox-api` and has not yet reached `api.summation.com`. Re-point both commands at the production base URL once that deploy lands.
+The committed snapshot tracks **sandbox**. `row_format` is now live on both `sandbox-api` and `api.summation.com`, so either base URL refreshes a snapshot that carries it.
 
 Per-PR CI (`.github/workflows/ci.yml`) runs `pytest -q` plus the installer tests, so it gates on the offline contract tests above only — it never reaches the network. Reconciling the snapshot against its source host is a manual step (`--check`), which keeps unrelated backend PRs from reddening when sum-api deploys ahead of the snapshot, but also means nothing notices the drift on its own.
 
 The contract tests cover paths, methods, query params, and — for request schemas that set `additionalProperties: false` — the top-level JSON body keys a call site sends literally. That last check only sees `json={...}` written inline; payloads assembled in a local variable are skipped, as are the many operations whose schemas accept unknown fields. It is deliberately sound rather than broad: it will not report a field that is fine, but it cannot vouch for every request body.
 
-A body field the CLI sends ahead of the snapshot's host is therefore a red suite until that snapshot is refreshed. That is the intended gate — a closed schema rejects unknown fields outright, so shipping early means a 422 on every call, not a degraded response. It follows that while the snapshot tracks sandbox, the gate only proves `queries run` works against sandbox; production still 422s until `row_format` deploys there.
+A body field the CLI sends ahead of the snapshot's host is therefore a red suite until that snapshot is refreshed. That is the intended gate — a closed schema rejects unknown fields outright, so shipping early means a 422 on every call, not a degraded response. Because the snapshot tracks sandbox, the gate proves `queries run` against sandbox; production accepts `row_format` as well, but a field that reaches sandbox first is unproven there until it deploys.
 
 Command-tree action blurbs for API-backed commands are derived from the snapshot at runtime via `sum_cli/openapi_doc.py`; `config` and other local-only actions stay hand-written there. Composite commands (`tables import`, `reports verify`) have known doc/route alignment gaps — see comments in `openapi_doc.py`.
 
