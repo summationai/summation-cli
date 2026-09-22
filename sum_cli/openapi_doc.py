@@ -636,7 +636,12 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "set-project": "Set default_project for the active (or --profile) profile.",
         "clear-project": "Clear default_project for the active (or --profile) profile.",
         "import-env": "Import SUM_API_* from an env file into a profile in summation-config.",
-        "set-profile": "Create or replace a profile.",
+        # An existing profile can hold a live sign-in that no flag names, so say
+        # here — where agents read the command tree — that a merge is the default.
+        "set-profile": (
+            "Create a profile, or merge fields into one that exists (stored credentials "
+            "are kept and reported); --replace discards everything the flags do not name."
+        ),
         "copy-profile": "Clone a profile under a new name.",
         "delete-profile": "Remove a profile (--confirm).",
     },

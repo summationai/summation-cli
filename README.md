@@ -359,12 +359,14 @@ Optional per-profile fields: `device_login_credential`, `access_token`, `token_e
 | `config show [profile]` | Show one profile from file (secrets redacted) |
 | `config active` | Resolved effective config: active profile, account, default project, credentials |
 | `config import-env` | Import `SUM_API_*` from an env file into `~/.summation/summation-config` |
-| `config set-profile` | Create or replace a profile (`--confirm` not required) |
+| `config set-profile` | Create a profile, or merge into an existing one (**`--replace`** replaces it wholesale) |
 | `config copy-profile` | Clone a profile |
 | `config delete-profile` | Remove a profile (**`--confirm`**) |
 
-`set-profile` options: `--base-url`, optional `--client-id` + `--client-secret`, `--default-project`, `--m2m-scope`, `--login/--no-login`.
+`set-profile` options: `--base-url`, optional `--client-id` + `--client-secret`, `--default-project`, `--m2m-scope`, `--replace`, `--login/--no-login`.
 
+- **An existing profile is merged, not overwritten.** The flags you pass are updated; every other stored field is kept, including a live sign-in (`device_login_credential`, `access_token`). The result payload names what was kept and what changed, and `auth_will_use` names the credential authentication will pick.
+- **`--replace` writes the profile from the flags alone.** Any stored credential is discarded and the payload lists it under `discarded`, so this signs the machine out of that profile. Use it only when that is what you want.
 - With only `--base-url`, `set-profile` creates a device-login-ready profile. Then run `sumcli --profile <name> auth login`.
 - With both `--client-id` and `--client-secret`, the profile can also use `sumcli --profile <name> auth login --m2m`.
 - `--login` only performs the M2M exchange path when M2M credentials are present.
