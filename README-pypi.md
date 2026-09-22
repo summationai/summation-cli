@@ -72,7 +72,7 @@ The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always co
 | `tables`      | Grid tables and CSV import (`tables import`); row loads via `append` or `upsert`; also `data`, `import-status`, `catalog-show`, `catalog-update` |
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
 | `grid`        | Grid `status`, `create` (`--kind calc`/`data`), `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
-| `queries`     | Read-only SQL execution (`queries run`)                                                                                                              |
+| `queries`     | Read-only SQL execution (`queries run`). Result column names arrive camelCased (`order_id` as `orderId`)                                              |
 | `verification-tests` | Custom verification tests (`validate`, `upload`, `list`, `attach`, `list-attachments`, `preview`, `detach`)                                  |
 
 
