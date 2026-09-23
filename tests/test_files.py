@@ -29,6 +29,119 @@ def test_read_file_write_payload_binary(tmp_path: Path) -> None:
     assert "content" in payload
 
 
+def _upload_mint_client(captured: dict, *, max_bytes: int = 1024**3):
+    def capture_request(method: str, path: str, **kwargs: object):
+        captured.setdefault("calls", []).append((method, path, kwargs.get("json")))
+        if path.endswith("/files/uploads") and method == "POST":
+            return {
+                "data": {
+                    "uploadId": "up-1",
+                    "url": "https://s3.example/bucket",
+                    "fields": {
+                        "key": "org/prj/up-1",
+                        "x-amz-signature": "sig",
+                        "policy": "eyJ",
+                        "tagging": "<Tagging/>",
+                    },
+                    "expiresInSeconds": 900,
+                    "maxBytes": max_bytes,
+                }
+            }
+        if path.endswith("/finalize"):
+            return {"data": {"id": "f-1", "path": (kwargs.get("json") or {}).get("path")}}
+        return {"data": {}}
+
+    mock_client = MagicMock()
+    mock_client.request.side_effect = capture_request
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_client
+    mock_cm.__exit__.return_value = None
+    return mock_cm
+
+
+def _big_file(tmp_path: Path) -> Path:
+    big = tmp_path / "big.csv"
+    big.write_bytes(b"a" * (9 * 1024 * 1024))  # > the 8 MiB streaming threshold
+    return big
+
+
+def test_large_upload_streams_via_presigned_post_then_finalizes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A file over the streaming threshold mints a presigned upload, POSTs the bytes straight to
+    S3 (never through the API), then registers it via finalize — the path that supports 1 GiB."""
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setenv("SUMMATION_PROJECT", "proj_1")
+    big = _big_file(tmp_path)
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 204
+        text = ""
+
+    with (
+        patch("sum_cli.resources.files.api_client", return_value=_upload_mint_client(captured)),
+        patch("sum_cli.resources.files.httpx.post", return_value=_Resp()) as s3_post,
+    ):
+        result = runner.invoke(app, ["files", "upload", str(big), "--project", "proj_1"])
+
+    assert result.exit_code == 0
+    calls = captured["calls"]
+    # Mint, then finalize — never the buffering JSON write endpoint.
+    assert ("POST", "/v1/projects/proj_1/files/uploads", None) in calls
+    assert any(m == "POST" and p.endswith("/finalize") for m, p, _ in calls)
+    assert not any(m == "PUT" and p.endswith("/files/content") for m, p, _ in calls)
+    # The bytes went to the presigned S3 URL as multipart (policy fields + a streamed file handle).
+    s3_url = s3_post.call_args.args[0]
+    assert s3_url == "https://s3.example/bucket"
+    assert s3_post.call_args.kwargs["data"]["x-amz-signature"] == "sig"
+    assert "file" in s3_post.call_args.kwargs["files"]
+    # Finalize registered it at the derived path.
+    finalize = next(j for m, p, j in calls if p.endswith("/finalize"))
+    assert finalize == {"path": "/big.csv"}
+
+
+def test_large_upload_refuses_over_the_server_limit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setenv("SUMMATION_PROJECT", "proj_1")
+    big = _big_file(tmp_path)
+    captured: dict = {}
+
+    with (
+        patch(
+            "sum_cli.resources.files.api_client",
+            return_value=_upload_mint_client(captured, max_bytes=1024),
+        ),
+        patch("sum_cli.resources.files.httpx.post") as s3_post,
+    ):
+        result = runner.invoke(app, ["files", "upload", str(big), "--project", "proj_1"])
+
+    assert result.exit_code == 1
+    assert "FILE_TOO_LARGE" in result.stdout
+    s3_post.assert_not_called()  # refused before any upload
+
+
+def test_small_upload_still_uses_the_json_write_path(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setenv("SUMMATION_PROJECT", "proj_1")
+    small = tmp_path / "notes.md"
+    small.write_text("hello")
+    captured: dict = {}
+
+    with (
+        patch("sum_cli.resources.files.api_client", return_value=_upload_mint_client(captured)),
+        patch("sum_cli.resources.files.httpx.post") as s3_post,
+    ):
+        result = runner.invoke(app, ["files", "upload", str(small), "--project", "proj_1"])
+
+    assert result.exit_code == 0
+    assert any(m == "PUT" and p.endswith("/files/content") for m, p, _ in captured["calls"])
+    s3_post.assert_not_called()  # small file never mints a presigned upload
+
+
 def test_upload_sends_base64_for_binary(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")

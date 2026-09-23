@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 
 from sum_cli.client import ApiError
@@ -87,6 +88,43 @@ def show_file(
     emit(ok({"file": unwrap_data(body or {}, "data") or body, "project_id": pid}))
 
 
+# Above this size, a file is uploaded direct-to-S3 via a presigned POST and streamed from disk,
+# so an arbitrarily large file (up to the API's 1 GiB cap) never buffers in the CLI or transits
+# the API. At or below it, the small-file JSON write is one round trip and simpler. The JSON path
+# buffers the whole file (base64 for binary) through sum-api's pod, so the threshold is well under
+# any pod memory budget.
+_UPLOAD_STREAM_THRESHOLD_BYTES = 8 * 1024 * 1024
+# A large upload streams to S3 over minutes, so read/write timeouts are generous.
+_UPLOAD_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=600.0, pool=15.0)
+
+
+def _stream_upload_to_s3(url: str, fields: dict, local_path: Path) -> None:
+    """POST a local file to a presigned S3 URL, streaming it from disk.
+
+    Multipart form-data: every policy field first, then the file last (S3 requires that order),
+    with the handle passed to httpx so the request body streams a chunk at a time rather than
+    buffering the whole file in memory.
+    """
+    try:
+        with open(local_path, "rb") as handle:
+            resp = httpx.post(
+                url,
+                data={str(k): str(v) for k, v in fields.items()},
+                files={"file": (local_path.name, handle, "application/octet-stream")},
+                timeout=_UPLOAD_TIMEOUT,
+            )
+        if resp.status_code >= 400:
+            raise ApiError(resp.status_code, resp.text)
+    except httpx.HTTPError as exc:
+        emit_error(
+            err(
+                "UPLOAD_FAILED",
+                f"Uploading {local_path.name} to storage failed: {exc}",
+                "The upload URL is short-lived; re-run to mint a fresh one.",
+            )
+        )
+
+
 @app.command("upload")
 def upload_file(
     ctx: typer.Context,
@@ -95,17 +133,76 @@ def upload_file(
     remote_path: Annotated[str | None, typer.Option("--path")] = None,
     profile: ProfileOption = None,
 ) -> None:
-    pid = require_project(ctx, project)
-    payload: dict = read_file_write_payload(local_path)
-    target_path = remote_path or f"/{local_path.name}"
-    with api_client(ctx, profile) as c:
-        body = c.request(
-            "PUT",
-            f"/v1/projects/{pid}/files/content",
-            params={"path": target_path},
-            json=payload,
+    """Upload a local file to a project, at any size.
+
+    A large file streams directly to storage via a presigned URL — the bytes never buffer in the
+    CLI or pass through the API — then is registered at the target path. Small files take the
+    simpler one-request write path.
+    """
+    if not local_path.is_file():
+        emit_error(
+            err(
+                "FILE_NOT_FOUND",
+                f"{local_path} is not a file.",
+                "Pass the path to a local file to upload.",
+            )
         )
-    emit(ok({"file": unwrap_data(body or {}, "data") or body, "project_id": pid}))
+    pid = require_project(ctx, project)
+    target_path = remote_path or f"/{local_path.name}"
+    size = local_path.stat().st_size
+
+    if size <= _UPLOAD_STREAM_THRESHOLD_BYTES:
+        payload: dict = read_file_write_payload(local_path)
+        with api_client(ctx, profile) as c:
+            body = c.request(
+                "PUT",
+                f"/v1/projects/{pid}/files/content",
+                params={"path": target_path},
+                json=payload,
+            )
+        emit(ok({"file": unwrap_data(body or {}, "data") or body, "project_id": pid}))
+        return
+
+    # Large file: mint a presigned upload, stream the bytes straight to S3, then register it.
+    with api_client(ctx, profile) as c:
+        mint = (
+            unwrap_data(c.request("POST", f"/v1/projects/{pid}/files/uploads") or {}, "data") or {}
+        )
+        url = mint.get("url")
+        fields = mint.get("fields")
+        upload_id = mint.get("uploadId") or mint.get("upload_id")
+        max_bytes = mint.get("maxBytes") or mint.get("max_bytes")
+        if not (url and isinstance(fields, dict) and upload_id):
+            emit_error(
+                err(
+                    "UPLOAD_URL_MISSING",
+                    f"sum-api did not return a usable upload URL for {local_path.name}.",
+                    "Confirm your credentials have agent:write on the project.",
+                )
+            )
+        if max_bytes and size > int(max_bytes):
+            emit_error(
+                err(
+                    "FILE_TOO_LARGE",
+                    f"{local_path.name} is {size} bytes; the limit is {int(max_bytes)} bytes.",
+                    "Split the file or contact Summation to raise the limit.",
+                )
+            )
+        _stream_upload_to_s3(url, fields, local_path)
+        final = c.request(
+            "POST",
+            f"/v1/projects/{pid}/files/uploads/{upload_id}/finalize",
+            json={"path": target_path},
+        )
+    emit(
+        ok(
+            {
+                "file": unwrap_data(final or {}, "data") or final,
+                "project_id": pid,
+                "upload_id": upload_id,
+            }
+        )
+    )
 
 
 # Rendered download formats. `raw` streams the stored file bytes via the file
