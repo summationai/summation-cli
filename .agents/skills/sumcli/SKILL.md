@@ -1,6 +1,6 @@
 ---
 name: sumcli
-description: Use the sumcli CLI to authenticate, manage profiles/projects, and operate Summation via sum-api (/v1) — projects, catalog, tables, views, queries, chats, reports, files, connections, and grid. Use when running sumcli, scripting Summation automation, or when the user mentions summation-cli, sumcli, or prefers the CLI over raw API/helper scripts.
+description: Use the sumcli CLI to authenticate, manage profiles/projects, and operate Summation via sum-api (/v1) — projects, catalog, tables, views, queries, chats, reports, files, connections, grid, and custom verification tests. Use when running sumcli, scripting Summation automation, or when the user mentions summation-cli, sumcli, or prefers the CLI over raw API/helper scripts.
 ---
 
 # sumcli
@@ -15,14 +15,30 @@ First-party public CLI for [sum-api](https://github.com/summationai/summation-sk
 
 ## Install
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+. Detect the user's shell and run **one** of these — do not paste `curl | sh` into PowerShell or cmd.exe.
 
 ```bash
 uv tool install summation-cli
 # or from this repo (editable):
 uv tool install .
-curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
+curl -fsSL https://install.summation.com/sumcli | sh   # macOS / Linux / Git Bash / WSL
+sumcli update   # later upgrades (uv tool install --force summation-cli@latest)
 ```
+
+```powershell
+# Windows PowerShell / pwsh
+irm https://install.summation.com/sumcli.ps1 | iex
+sumcli update
+```
+
+```bat
+REM Windows cmd.exe — same installer, launched via PowerShell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"
+```
+
+## Plugin ↔ CLI version contract
+
+The Summation plugin requires **sumcli ≥ 0.1.4**. Taking PyPI latest is always compatible (`sumcli update`). Plugins parse `sumcli --version` (`SUMCLI_OUTPUT=json`; read `result.version`). If the binary is missing or below that floor, install with the matching bootstrap above, then `sumcli update`.
 
 ## Agent rules
 
@@ -31,17 +47,27 @@ curl -fsSL https://install.summation.com/sumcli | sh   # bootstrap
    sumcli | jq '.result.resources'
    sumcli <resource> --help
    ```
-2. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
-3. **Root options before subcommand**: `--profile`, `--base-url`, `--output`, `--project` (where applicable).
-4. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` is included because a manual run delivers real email immediately — check the recipients the refusal lists with the user before re-running with `--confirm`.
-5. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
-6. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
+2. **State intent** — always pass `--intent` as a root option before the subcommand on any command that reads or writes Summation data, unless `SUMCLI_NO_INTENT` is set (org kill switch: the header is not sent). Use the human's request **in their own words** — not a summary of the command you are running. The CLI does not fail without it (unattended pipelines have no ask to state), but it warns, and the run cannot be joined to a goal. You are an agent: you have the human's words, so send them. The limit is 500 bytes after encoding, so plain English gets about 500 characters and accented or non-Latin text gets fewer; if the request is longer, use the first part of their words. Set `SUMCLI_INTENT` once to cover a whole session.
+   - User said: `convert my weekly recap` → `--intent "convert my weekly recap"`
+   - Wrong: `--intent "list projects"` or `--intent "attach the catalog table"`
+   - **Exempt** (no `--intent` needed): discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external provider, not to sum-api.
+   - The examples in this file show `--intent` only where it is necessary. Add your own value; do not copy the placeholder text.
+3. **Parse JSON** — when stdout is not a TTY (piped/agent), output is JSON envelopes. Pipe through `jq`. Force with `SUMCLI_OUTPUT=json` or `sumcli --output json <resource> ...` (`--output` must precede the subcommand).
+4. **Root options before subcommand**: `--intent`, `--profile`, `--base-url`, `--output`, `--project` (where applicable).
+5. **Destructive ops need `--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` needs it only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are included because they can deliver real email/Slack — check with the user before re-running with `--confirm`.
+6. **Never put secrets** in commits, logs, or skill files. Config lives in `~/.summation/summation-config`.
+7. **Parallel agents**: do not call `config use` on a shared config. Pass `--profile` and/or set `SUMMATION_PROFILE` / `SUMMATION_PROJECT` per process.
 
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
+sumcli --intent "human's request" [--profile NAME] [--base-url URL] [--output json|human] <resource> <action> [options]
+sumcli update    # root command: upgrade to the latest PyPI release
 ```
+
+`--intent` is optional but expected of agents. Omitting it in machine mode (piped, or `--output json`) prints a one-line warning on stderr and the command still runs — stdout stays a clean envelope. `SUMCLI_INTENT` covers a whole session. An intent over 500 bytes is refused, because that value would go on the wire.
+
+Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups do not need it, so the setup sequence below runs as written.
 
 Project-scoped commands accept `--project` when no default is set.
 
@@ -49,7 +75,7 @@ Project-scoped commands accept `--project` when no default is set.
 
 Config file: `~/.summation/summation-config` (override with `SUMMATION_CONFIG_FILE`).
 
-**Base URL is tenant-specific.** Each tenant has its own API host (e.g. `https://sandbox-api-<tenant>.summation.com`, `https://api-<tenant>.summation.com`). Do **not** assume `https://sandbox-api.summation.com` — that is only the CLI's built-in fallback when nothing else is set. Ask the user for their tenant API URL, or reuse `SUM_API_BASE_URL` / an existing profile (`sumcli config active`, `sumcli config list`).
+**Base URL is tenant-specific.** Each tenant has its own API host (e.g. `https://sandbox-api-<tenant>.summation.com`, `https://api-<tenant>.summation.com`). Do **not** assume `https://api.summation.com` — that is only the CLI's built-in fallback when nothing else is set. Ask the user for their tenant API URL, or reuse `SUM_API_BASE_URL` / an existing profile (`sumcli config active`, `sumcli config list`).
 
 **Device login (typical):**
 
@@ -71,7 +97,9 @@ sumcli config use myenv
 sumcli --profile myenv auth login --m2m
 ```
 
-Useful: `auth whoami`, `auth status`, `auth token` (redacted), `config active`, `config list`, `config set-project <id>`.
+Useful: `auth whoami`, `auth status`, `auth token` (redacted by default; `--reveal` shows the token in the JSON envelope, `--raw` prints the bare token for `TOKEN=$(sumcli auth token --raw)`), `config active`, `config list`, `config set-project <id>`. Both flags emit a live credential — never let that output reach a CI log.
+
+`config import-env <file>` is a one-time bridge: copy `SUM_API_*` from any env file (e.g. a skill or CI `.env`) into `~/.summation/summation-config`. sumcli does not read other config paths at runtime.
 
 ### Precedence (field-specific)
 
@@ -79,7 +107,7 @@ Useful: `auth whoami`, `auth status`, `auth token` (redacted), `config active`, 
 |-------|------------------------|
 | Profile | `--profile` → `SUMMATION_PROFILE` → `[_meta].active_profile` → `default` |
 | Base URL | `--base-url` → `SUM_API_BASE_URL` → profile `base_url` → built-in fallback (not a real tenant host) |
-| Credentials | `SUM_API_*` env → profile section |
+| Credentials | Profile section in `~/.summation/summation-config` only (not live `SUM_API_*` env) |
 | Project | `--project` → profile `default_project` → `SUMMATION_PROJECT` |
 
 Auth resolution: `device_login_credential` → static `access_token` → M2M client id/secret exchange. Identity comes from the bearer token only.
@@ -93,23 +121,41 @@ Auth resolution: `device_login_credential` → static `access_token` → M2M cli
 | `tenant` | org/tenant metadata |
 | `projects` | CRUD, `current` |
 | `catalog` | attach/detach/list project tables & views |
-| `tables` | grid tables, CSV `import`, data |
+| `tables` | grid tables, CSV `import`, `append`, `upsert`, `data` |
 | `views` | Summation views |
 | `queries` | read-only SQL (`queries run --sql` / `--file`); cap rows with SQL `LIMIT` or `--limit` (API default 100, max 10000/request; higher auto-paginates) |
 | `chats` | Addison; `--follow` streams NDJSON; `feedback` rates a message |
 | `reports` | generate/verify (`.sdoc`); default `--follow` on |
 | `playbooks` | discovery only (`list`, `show`) — **read-only**; author and edit via `chats` |
-| `schedules` | recurring playbook runs (CRUD, pause/resume, run now, run history) |
+| `schedules` | recurring playbook runs (CRUD, pause/resume, run now, run history); create may 403 `use_workflows` |
+| `workflows` | multi-step automations (typed graphs): list/show/create/update, activate, versions, runs, run now, node-types |
 | `files` | project file upload/download/list/delete |
 | `filesystem` | connected roots (e.g. SharePoint; provider APIs, not sum-api) |
-| `connections` | data sources (CRUD, test, browse, datasets, snapshots) and app connectors (`app-*`) |
-| `grid` | status, sync, lineage, push |
+| `connections` | data sources (CRUD, test, browse, datasets, attach-datasets, detach-dataset, snapshots) and app connectors (`app-*`) |
+| `grid` | status, sync, lineage, push, `create` (calc from query or empty data table from columns), `materialize` |
+| `verification-tests` | validate/upload custom test bundles; manage attachment overlays and preview effective tests |
 
 ## Common workflows
+
+### Custom verification tests
+
+```bash
+sumcli verification-tests validate --bundle ./tests.yaml       # offline
+sumcli verification-tests upload --bundle ./tests.yaml
+sumcli verification-tests attach --scope project --subject-type deck \
+  --op add --custom-test-id cvt-...
+sumcli verification-tests preview --scope project --subject-type deck
+sumcli verification-tests detach vta-... --scope project --confirm
+```
+
+Project scope uses the profile default unless `--project` is supplied. Cross-org calls use `--target-org` and must specify a project explicitly for project scope. `upload`, `attach`, and `detach` support network-free `--dry-run`; dry runs never require `--confirm`. `attach --op remove --target-ref ... --confirm` creates a removal overlay (it suppresses a running test, so `--confirm` is required), while `detach ... --confirm` removes an attachment record.
 
 ### CSV → queryable table
 
 ```bash
+# Set the intent once for the session, in the human's own words.
+export SUMCLI_INTENT="get my customer spreadsheet into a table I can query"
+
 # One-shot local ingest (recommended if file need not stay in project tree)
 sumcli tables import --local --path ./Customers.csv --table customers
 # NDJSON ends with importStatus SUCCESS + table_id (tbl-...)
@@ -122,9 +168,45 @@ sumcli queries run --sql 'SELECT * FROM customers LIMIT 5'
 sumcli queries run --sql 'SELECT * FROM customers' --limit 5
 ```
 
+Without `SUMCLI_INTENT`, pass `--intent "<the human's request>"` before the subcommand on each of these commands.
+
 Two-step (keep CSV in project files): `files upload` then `tables import --remote --path /Customers.csv --table customers`.
 
 After import, **attach** before the table appears in `catalog list` / project queries. `tables delete` does not auto-detach — run `catalog detach` separately.
+
+### Agent-owned data table (upsert by business key)
+
+Use this when the rows come from your own code — app state, an op-log, a suppression
+list — rather than from a file or an existing query. `--kind data` creates the table
+empty; load rows with `tables upsert` (business keys only — no `s_id`).
+
+```bash
+sumcli grid create ops_log --kind data \
+  --column event_id:uuid:notnull \
+  --column op:string \
+  --column count:integer \
+  --key-column event_id
+
+sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+```
+
+Use `tables append` only when you supply `s_id` yourself (append-only insert via
+`POST /v1/tables/{id}/rows`). For `kind=data` tables with `--key-column`, prefer
+`tables upsert` (`PUT …/rows`): rows use business keys only, and re-sending the same
+entity updates in place.
+
+Rules the API enforces, checked locally first so a wrong schema costs no round trip:
+
+- `--column` is `name:type[:null|notnull]`; order is kept, nullable is the default.
+- Types: `string`, `integer`, `decimal`, `big_decimal`, `boolean`, `date`, `datetime`,
+  `json`, `uuid`. Nothing else.
+- Do **not** declare `s_id`, `s_created_at`, or any `_sm_*` column — the row store adds
+  an integer `s_id` primary key and an `s_created_at` timestamp itself.
+- `--key-column` is the **business key** matched on upsert, not the primary key, and must
+  name a column you declared.
+- 50 columns max per create. Use `--columns-file <path>` (JSON array) for a long schema.
+- `--query` and `--column` are mutually exclusive: `--kind calc` takes a query,
+  `--kind data` takes columns.
 
 ### Data connections (add, verify, remove)
 
@@ -133,6 +215,9 @@ credentials pass a test, and datasets are attached. Creating alone gets you none
 the last two.
 
 ```bash
+# 0. DISCOVER — check accepted config and secret keys for the connector type
+sumcli connections types SNOWFLAKE
+
 # 1. CREATE — secrets go in a file, never on the command line
 cat > /tmp/conn.json <<'EOF'
 {
@@ -193,9 +278,18 @@ Removing a connection:
 ```bash
 sumcli connections show "$CONN"                 # confirm the target first
 sumcli connections datasets "$CONN"             # see what you are about to orphan
+# Detach each dataset first — delete refuses while any remain attached.
+sumcli connections detach-dataset "$CONN" ds-... --confirm
 sumcli connections delete "$CONN" --confirm     # irreversible
 sumcli connections list                         # verify it is gone
 ```
+
+`detach-dataset` is destructive (`--confirm`) and **waits by default**. The DELETE
+returns `200` immediately, but teardown is asynchronous: a `connections delete`
+run right after still fails with "N dataset(s) still attached". `--wait` polls
+`connections datasets` until the id is gone (up to 60s) so a following delete
+is safe. `--no-wait` returns the pending teardown for callers that will poll
+themselves.
 
 **Best practices**
 
@@ -231,7 +325,11 @@ sumcli connections list                         # verify it is gone
    is 100 datasets per request, applied as one atomic batch.
 9. **Check what a delete orphans before running it.** Deleting is irreversible and
    takes down every dataset attached to that connection. List the datasets first, and
-   confirm the id with `show` — ids are easy to transpose.
+   confirm the id with `show` — ids are easy to transpose. To remove one dataset
+   without deleting the connection, use `connections detach-dataset --confirm`
+   (default `--wait`); do not call the raw DELETE. A scripted detach-then-delete
+   must wait — `--no-wait` followed immediately by `connections delete` is the
+   race that looks like a flaky CLI.
 10. **Do not leave test connections behind in a real tenant.** If you create one to
     exercise a flow, delete it in the same session. An inert record with dead
     credentials still shows up in the workspace UI as a broken connection.
@@ -314,12 +412,47 @@ sumcli files list --project prj-... --count 100 | jq -r '.result.files[] | "\(.k
 6. **Demand a run report with counts.** Rows read, date range, per-segment counts, skipped items, output size, byte delta. Without numbers you cannot tell a correct run from a plausible-looking one.
 7. **Iterate through the same chat.** Use `chats reply --chat <id>` so the agent keeps the full constraint history. A fresh `chats create` loses that context and re-litigates decisions.
 8. **Remember the row cap.** `queries` caps at **10,000 rows per request** (`QueryExecutionRequest.limit` maximum); the agent's own SQL tool caps higher. Neither can be raised. If a source exceeds the cap, the playbook must paginate — say so up front rather than letting a run discover it.
+9. **JSONPath accessors in the query engine.** The query engine can return `NULL` for every row on invalid/unsupported JSONPath accessors without failing the query. Always verify non-null column counts when extracting from JSON structures.
 
-**Triggering.** There is no `sumcli playbooks run`. Options: run it in the web app, ask in chat (*"run the X playbook"*), or create a schedule and call `sumcli schedules run` — see below.
+**Triggering.** There is no `sumcli playbooks run`. Options: run it in the web app, ask in chat (*"run the X playbook"*), create a schedule and call `sumcli schedules run`, or (when the tenant has workflows) create a workflow and call `sumcli workflows run` — see below.
+
+### Workflows (typed graphs)
+
+A workflow is a scheduled multi-step automation: triggers, a typed graph (playbook + delivery nodes), activate, then run. **Feature-gated** — ungated tenants get `403 feature_not_enabled`. Writes need a user-context session (not M2M-only). No delete; archive via `--status archived` on update.
+
+```bash
+# See which node type ids this org may put in a graph
+sumcli workflows node-types | jq '.result.node_types'
+
+# Author graph.json ({"nodes":[...],"edges":[...]}) and triggers.json (array) from those types
+sumcli workflows create --project prj-... --title "Weekly board" \
+  --graph-file graph.json --triggers-file triggers.json
+
+sumcli workflows list --project prj-... | jq '.result.workflows'
+WF=$(sumcli workflows list --project prj-... | jq -r '.result.workflows[0].id')
+REV=$(sumcli workflows show "$WF" | jq -r '.result.workflow.revision')
+
+sumcli workflows update "$WF" --expected-revision "$REV" --title "Weekly board v2"
+# Prefer --body-file from a prior show for a full GET→PUT round-trip
+
+sumcli workflows activate "$WF" --expected-revision "$REV" --confirm   # freezes the live version
+sumcli workflows versions "$WF"
+sumcli workflows run "$WF" --confirm   # --version defaults from activeVersionId; sends delivery
+sumcli workflows runs "$WF"
+sumcli workflows run-show "$WF" run_...
+```
+
+**Best practices**
+
+1. **Build graphs only from `node-types`.** Config keys the catalog does not name are refused.
+2. **Draft → activate is how you go live.** `create`/`update` never make a workflow active; `activate` freezes the version schedules and `run` use.
+3. **`activate` and `run` need `--confirm`.** Both can send real email/Slack. `run` is idempotent on `--request-id` (UUID); omit it to get a fresh one, echo it from the result for retries.
+4. **Optimistic concurrency.** Pass `--expected-revision` from the last `show`; a stale revision 409s and applies nothing.
+5. **When `schedules create` returns 403 `use_workflows`**, author the cadence as a workflow instead (`node-types` → `create` → `activate`). Existing schedules stay fully usable (list/show/pause/resume/run).
 
 ### Scheduled playbook runs
 
-Run a playbook on a cadence and email the output. **Schedules target playbooks only** — to schedule a report, first save the work as a playbook, then schedule that.
+Run a playbook on a cadence and email the output. **Schedules target playbooks only** — to schedule a report, first save the work as a playbook, then schedule that. On tenants with workflows enabled, `schedules create` returns `403 use_workflows` and points at `POST /v1/workflows` — use the workflows section above.
 
 ```bash
 # Playbook ids come back as fileId (NOT id) and look like file-...
@@ -358,7 +491,19 @@ Schedule ids are `schedule_<uuid>`, not `sch-...`. After `create`, confirm `stat
 9. **Always set `--zone` for business hours.** The default is UTC, so an unzoned `09:00` is early evening in Sydney and the small hours in Los Angeles. Pass an IANA ID (`America/New_York`), which tracks daylight saving; a fixed offset does not.
 10. **`--param` values are strings.** The contract types them as strings, so `--param threshold=0.8` arrives as `"0.8"`. The playbook must do its own casting.
 11. **Repeat `--email` per recipient**, as `address[:type[:name]]` — e.g. `--email ops@acme.com`, `--email cfo@acme.com:cc:Dana`. Type defaults to `to`; max 50 recipients.
-12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong.
+12. **Confirm delivery through `schedules runs`**, not by assuming a create succeeded. A schedule can exist and still fail every run — for example, if the playbook errors or the output folder is wrong. The payload carries only two facts per run — the `schedule` object and its executions — so `sumcli` flattens it to **one row per execution**. On each row, `id` and `status` describe the *execution*; `schedule_id` is lifted from the parent `schedule` object. There is no run-level status to read, so judge a run by its executions:
+
+    ```bash
+    # Per-execution outcome
+    sumcli schedules runs schedule_... --count 5 \
+      | jq -r '.result.runs[]
+               | if .has_execution == false then "(no execution yet)" else "exec=\(.id) \(.status)" end'
+
+    # Did any execution fail?
+    sumcli schedules runs schedule_... | jq '[.result.runs[] | select(.status=="FAILED")] | length'
+    ```
+
+13. **A queued run appears as a marker row with `has_execution: false`.** A run that has not produced an execution yet has no execution fields to report, so it is emitted as a single row carrying the parent context and that flag. This is deliberate: dropping it would make a run you just triggered look like it never happened. Right after `schedules run --confirm`, expect exactly this row — poll again for the outcome rather than reading its absence as a failure. Test `.has_execution == false` rather than probing for a missing `id`.
 
 ### Chat feedback
 
@@ -393,12 +538,14 @@ Track the chat ID from the `chats list` / `chats show` response rather than expe
 
 - Success/validation: one JSON envelope (`ok`, `result` / `error`, often `next_actions`).
 - `--follow` / import streams: NDJSON lines; **last line** is terminal `result` or `error`.
-- Failures: exit **1**. Codes include `NO_PROJECT`, `CONFIRM_REQUIRED`, `INVALID_FLAGS`, `IMPORT_FAILED`, `INTERNAL_ERROR`.
+- Failures: exit **1**. Codes include `NO_PROJECT`, `CONFIRM_REQUIRED`, `INVALID_FLAGS`, `IMPORT_FAILED`, `INTENT_TOO_LONG`, `INTERNAL_ERROR`.
 - Human TTY view is lossy — never parse it; use JSON mode.
 
 ## Env vars (quick)
 
-`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`.
+`SUMMATION_CONFIG_FILE`, `SUMMATION_PROFILE`, `SUMMATION_PROJECT`, `SUM_API_BASE_URL`, `SUM_API_CLIENT_ID`, `SUM_API_CLIENT_SECRET`, `SUM_API_ACCESS_TOKEN`, `SUM_API_M2M_SCOPE`, `SUMCLI_OUTPUT`, `SUMCLI_INTENT`, `SUMCLI_NO_INTENT` (org kill switch: never send `X-Summation-Intent`), `SUMCLI_TIMEOUT` (sum-api HTTP timeout seconds, default 120; same as `--timeout`), `SUMCLI_NO_UPDATE_CHECK`, `SUMCLI_CLIENT_CONTEXT` (calling-surface token appended to the User-Agent, e.g. `claude-plugin/0.4.0`; analytics only).
+
+Read by the Summation plugin, not this CLI: `SUMCLI_NO_AUTO_INSTALL` (SessionStart auto-install opt-out).
 
 ## More detail
 

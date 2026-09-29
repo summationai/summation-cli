@@ -31,16 +31,36 @@ Then:
 
 ```bash
 sumcli --help
-uv tool upgrade summation-cli   # later upgrades
+sumcli update                   # upgrade a uv-managed install to the latest PyPI release
 ```
 
-**curl bootstrap** (installs uv if needed, then `uv tool install summation-cli`):
+Commands print a stderr notice when a newer PyPI version exists. Lookups are
+cached (a day on success, 15 minutes after a failed fetch). Stdout is unchanged,
+so JSON/`jq` still parse. Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
+`sumcli update` upgrades a uv-managed install only; other origins (pip, pipx,
+brew) get a targeted error instead of a second copy on PATH.
+
+**Bootstrap** (installs uv if needed, then `uv tool install summation-cli`):
 
 ```bash
 curl -fsSL https://install.summation.com/sumcli | sh
-# Windows PowerShell:
-# irm https://install.summation.com/sumcli.ps1 | iex
 ```
+
+```powershell
+irm https://install.summation.com/sumcli.ps1 | iex
+```
+
+From **cmd.exe** (Windows Shell), launch the same PowerShell installer:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"
+```
+
+## Plugin compatibility
+
+The Summation plugin requires **sumcli ≥ 0.1.4**. Newer CLI releases are always compatible — `sumcli update` (PyPI latest) is the upgrade path. A plugin release that needs a higher floor will bump its own `minVersion`; this CLI does not pin an upper bound.
+
+`sumcli --version` prints a JSON envelope with `result.version` when stdout is not a TTY (or when `SUMCLI_OUTPUT=json`). That is the version string plugins should parse.
 
 ## Resources
 
@@ -53,17 +73,36 @@ curl -fsSL https://install.summation.com/sumcli | sh
 | `chats` | Addison conversations; SSE → NDJSON with `--follow` on create/reply |
 | `reports` | Generate and verify reports (`.sdoc`); file ops via `files` |
 | `playbooks` | Playbook discovery |
-| `schedules` | Recurring playbook runs (CRUD, `pause`/`resume`, `run`, `runs`) |
+| `schedules` | Recurring playbook runs (CRUD, `pause`/`resume`, `run`, `runs`); create may require workflows |
+| `workflows` | Multi-step automations (typed graphs: create/update/activate/run, versions, node-types) |
 | `files` | Project-scoped files (`upload`, `download`, `list`, `delete`) |
 | `filesystem` | Connected filesystem roots such as SharePoint |
 | `catalog` | Project catalog entries (tables/views attached to a project) |
-| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`) |
-| `tables` | Grid tables and CSV import (`tables import` is a multi-step HTTP workflow) |
+| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `detach-dataset`, `snapshot`, `snapshots`) and app connectors (`app-*`) |
+| `tables` | Grid tables and CSV import (`tables import`); row loads via `append` or `upsert`; also `data`, `import-status`, catalog helpers |
 | `views` | Summation views |
-| `grid` | Grid status, sync, and lineage |
-| `queries` | Read-only SQL execution (`queries run`) |
+| `grid` | Grid status, sync, lineage, and table creation (`create --kind calc` or `data`) |
+| `queries` | Read-only SQL execution (`queries run`). Result column names arrive camelCased — `order_id` as `orderId`; see [Design rules](#design-rules) |
+| `verification-tests` | Validate, upload, attach, preview, and detach custom verification tests |
 
 Run `sumcli | jq '.result.resources'` for the live command tree with action blurbs, or `sumcli <resource> --help` for flags.
+
+### Custom verification tests
+
+Validate bundles entirely offline, then use the active profile and normal bearer authentication for the managed lifecycle:
+
+```bash
+sumcli verification-tests validate --bundle ./tests.yaml
+sumcli verification-tests upload --bundle ./tests.yaml
+sumcli verification-tests list --subject-type deck
+sumcli verification-tests attach --scope project --subject-type deck \
+  --op add --custom-test-id cvt-...
+sumcli verification-tests list-attachments --scope project --subject-type deck
+sumcli verification-tests preview --scope project --subject-type deck
+sumcli verification-tests detach vta-... --scope project --confirm
+```
+
+Project scope uses the profile's default project when `--project` is omitted. Cross-org calls use `--target-org ORG` and require an explicit project for project scope; identity always comes from the bearer token. Add `--dry-run` to `upload`, `attach`, or `detach` to validate and print the exact request without authentication or network access. A removal overlay (`attach --op remove --target-ref ... --confirm`) suppresses a test in resolution and requires `--confirm` because it turns off a test that currently runs; `detach ... --confirm` soft-removes the attachment record itself. Dry runs never require `--confirm`.
 
 ### Developers
 
@@ -74,18 +113,55 @@ uv tool install .
 # or: uv pip install -e .
 ```
 
-**Releases are manual.** There is no CI publish workflow — use `./scripts/publish.sh` when ready.
+**Releases are tag-driven.** `main` is the next unreleased line of development.
+Merging without a version bump does not publish anything. To ship:
+
+1. Bump `__version__` in `sum_cli/__init__.py` (and merge that to `main`).
+2. Tag the release commit and push the tag:
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+3. `.github/workflows/release.yml` re-runs tests, checks the tag matches
+   `__version__`, builds, publishes to PyPI via Trusted Publishing (OIDC),
+   creates a GitHub Release with the wheel/sdist, then dispatches the monorepo
+   `sumcli-pin-bump.yaml` workflow for the exact published version.
+
+The tagged commit must be on `main`. A `v*` tag can point at any commit, so the
+workflow also checks that the commit is an ancestor of `origin/main` and fails
+if it is not. Tag after the version bump merges, not before.
+
+One-time setup: add a PyPI Trusted Publisher for this repo
+(`workflow: release.yml`, `environment: pypi`) and create a GitHub Environment
+named `pypi`. Add required reviewers to that environment; the approval is the
+last human gate before a publish.
+
+One-time setup for the SUM-6166 companion dispatch: install the GitHub App backed
+by `TS_PROTO_GEN_APP_ID` / `TS_PROTO_GEN_APP_KEY` with access to
+`summationai/code`, grant it **Actions: write** on that repository, and define
+`TS_PROTO_GEN_APP_ID` as an Actions variable plus `TS_PROTO_GEN_APP_KEY` as an
+Actions secret available to this repo. The monorepo `sumcli-pin-bump.yaml`
+workflow must already be merged to `summationai/code` `main` before this CLI
+hook is merged, or the dispatch target will not exist. The dispatch job must
+fail rather than silently skip if those prerequisites are missing. Manual
+recovery after a successful publish:
+
+```bash
+gh workflow run sumcli-pin-bump.yaml -R summationai/code -f version=X.Y.Z
+```
+
+Local/emergency publishes (and TestPyPI dry runs) still work with
+`./scripts/publish.sh`:
 
 ```bash
 export UV_PUBLISH_PASSWORD_TEST='pypi-...'   # TestPyPI
-export UV_PUBLISH_PASSWORD='pypi-...'        # production
+export UV_PUBLISH_PASSWORD='pypi-...'        # production (prefer CI)
 
 ./scripts/publish.sh                # TestPyPI
 ./scripts/publish.sh --production    # real PyPI (type the version to confirm)
 ```
 
-A published version is permanent and can never be replaced, so bump
-`sum_cli/__init__.py` before re-publishing.
+A published version is permanent and can never be replaced.
 
 ## Quickstart
 
@@ -93,7 +169,7 @@ A published version is permanent and can never be replaced, so bump
 
 ```bash
 sumcli config set-profile onboard2 \
-  --base-url https://sandbox-api.summation.com
+  --base-url https://api-<tenant>.summation.com
 
 sumcli config use onboard2
 sumcli --profile onboard2 auth login
@@ -104,7 +180,7 @@ sumcli --profile onboard2 auth whoami | jq .
 
 ```bash
 sumcli config set-profile onboard2 \
-  --base-url https://sandbox-api.summation.com \
+  --base-url https://api-<tenant>.summation.com \
   --client-id "$SUM_API_CLIENT_ID" \
   --client-secret "$SUM_API_CLIENT_SECRET"
 
@@ -140,6 +216,50 @@ sumcli tables import --remote --path /Customers.csv --table customers
 
 Step 2 also accepts `--file-id file-...` if you have the ID directly. Internally, `--remote` mode downloads the file's bytes to a temp file, then runs the same upload+import flow as `--local` (sum-api has no direct project-file → grid endpoint today).
 
+### Agent-owned data table (`grid create --kind data`)
+
+`tables import` and `grid create --kind calc` both derive a table from data that already
+exists. When your code owns the rows instead — app state, an operator log, a
+suppression list — create an empty **data** table from a column schema, then load rows
+with **`tables upsert`**:
+
+```bash
+sumcli grid create ops_log --kind data \
+  --column event_id:uuid:notnull \
+  --column op:string \
+  --column count:integer \
+  --column noted_at:datetime \
+  --key-column event_id
+```
+
+Each `--column` is `name:type[:null|notnull]`, and order is kept. Types: `string`,
+`integer`, `decimal`, `big_decimal`, `boolean`, `date`, `datetime`, `json`, `uuid`.
+Columns are nullable unless you pass `:notnull`. For a longer schema, use
+`--columns-file cols.json` with a JSON array instead:
+
+```json
+[{"name": "event_id", "type": "uuid", "nullable": false},
+ {"name": "op", "type": "string"}]
+```
+
+The table accepts rows as soon as the create returns:
+
+```bash
+sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+```
+
+**`tables append` vs `tables upsert`:** both hit `/v1/tables/{id}/rows`, different methods.
+
+| Command | API | Rows must include |
+|---------|-----|-------------------|
+| `tables upsert` | `PUT` | Business-key columns only (`event_id`, …) — **use for `kind=data` tables** |
+| `tables append` | `POST` | Primary key `s_id` (caller-assigned, append-only) |
+
+`--key-column` on create names the **business key** matched on upsert, not the physical
+primary key. Every data table already has an integer `s_id` primary key and an
+`s_created_at` timestamp, added for you — declaring either in `--column` is refused.
+A single create takes at most 50 columns.
+
 ### Existing project file → grid table
 
 If the file is already in the project (uploaded by someone else, dropped via the UI, etc.):
@@ -166,7 +286,7 @@ sumcli tables delete --confirm tbl-...                          # remove from gr
 
 ### Scheduled playbook runs
 
-Schedules target **playbooks only** — `kind` is `playbook` in the API. Playbook ids come back as `fileId` from `playbooks list`.
+Schedules target **playbooks only** — `kind` is `playbook` in the API. Playbook ids come back as `fileId` from `playbooks list`. On tenants with workflows enabled, `schedules create` may return `403 use_workflows` — use `workflows` instead (existing schedules remain usable).
 
 ```bash
 sumcli schedules create --project prj-... --playbook file-... \
@@ -184,6 +304,19 @@ sumcli schedules delete schedule_... --confirm
 
 > **Note:** `PUT /v1/schedules/{id}` replaces the whole schedule, so `schedules update` re-sends every **cadence** flag. **Config is preserved**: the command reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you omit them. This merge is deliberate — `email_recipients`, `params`, and `output_config` have no server-side default, so a cadence-only update would otherwise stop all email delivery.
 
+### Workflows
+
+Typed-graph automations under `/v1/workflows` (feature-gated). Author `graph.json` / `triggers.json` from `workflows node-types`, then create → activate → run.
+
+```bash
+sumcli workflows node-types
+sumcli workflows create --project prj-... --title "Weekly" \
+  --graph-file graph.json --triggers-file triggers.json
+sumcli workflows activate wf_... --expected-revision N --confirm
+sumcli workflows run wf_... --confirm   # --version from activeVersionId when omitted
+sumcli workflows runs wf_...
+```
+
 ### Long-running operations
 
 `chats create`, `chats reply`, `reports generate`, `reports verify`, `grid push`, and `tables import` all support `--wait`/`--no-wait` (and `--follow` where applicable). See **Long-running commands** below.
@@ -193,9 +326,6 @@ sumcli schedules delete schedule_... --confirm
 Most users should use device login; admin-managed accounts can use M2M. Power users can define several **environment accounts** in the config file. Each profile is a tenant + API host + credentials/session state (not a Ramp-style `--env` toggle on one identity). Name profiles `{tenant}_{env}` when you have multiple deployments (e.g. tenant sandbox, staging, production).
 
 **Config file:** `~/.summation/summation-config` (TOML), overridable with `SUMMATION_CONFIG_FILE`.
-
-Existing `~/.summation/config` users should rename that file to
-`~/.summation/summation-config`; the TOML format is unchanged.
 
 ```toml
 [_meta]
@@ -228,7 +358,7 @@ Optional per-profile fields: `device_login_credential`, `access_token`, `token_e
 | `config list` | List profiles (secrets not shown) |
 | `config show [profile]` | Show one profile from file (secrets redacted) |
 | `config active` | Resolved effective config: active profile, account, default project, credentials |
-| `config import-env` | Import `SUM_API_*` variables from a skill-style env file into `~/.summation/summation-config` |
+| `config import-env` | Import `SUM_API_*` from an env file into `~/.summation/summation-config` |
 | `config set-profile` | Create or replace a profile (`--confirm` not required) |
 | `config copy-profile` | Clone a profile |
 | `config delete-profile` | Remove a profile (**`--confirm`**) |
@@ -275,7 +405,7 @@ Precedence is **field-specific** (there is no single global env-beats-file rule)
 1. CLI `--base-url`
 2. `SUM_API_BASE_URL`
 3. Profile section `base_url` in the config file
-4. `https://sandbox-api.summation.com`
+4. `https://api.summation.com`
 
 ### Credentials (`client_id`, `client_secret`, `access_token`, `m2m_scope`)
 
@@ -310,6 +440,9 @@ Explicit `--project` always wins. When both file and env set a default, **the fi
 | `SUM_API_CLIENT_SECRET` | M2M client secret |
 | `SUM_API_ACCESS_TOKEN` | Static bearer token (skips M2M exchange) |
 | `SUM_API_M2M_SCOPE` | Optional scope on M2M token request |
+| `SUMCLI_INTENT` | Default `--intent` (human's request, their words when possible) |
+| `SUMCLI_NO_INTENT` | Do not send `X-Summation-Intent`, even if `--intent` / `SUMCLI_INTENT` is set |
+| `SUMCLI_TIMEOUT` | HTTP timeout in seconds for sum-api calls (default 120). Same as `--timeout`. |
 | `SHAREPOINT_TENANT_ID` | Azure AD tenant for SharePoint app-only auth |
 | `SHAREPOINT_CLIENT_ID` | SharePoint app client id (falls back to `CLIENT_ID`) |
 | `SHAREPOINT_CLIENT_SECRET` | SharePoint app secret (falls back to `CLIENT_SECRET`) |
@@ -339,8 +472,12 @@ sumcli projects --help   # per-command flags and Typer help strings
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] <resource> <action> [--options]
+sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
+
+`--intent` is the human's request **in their own words** when possible — not a summary of the command. It is sent to sum-api as `X-Summation-Intent`. It is optional: omitting it in machine mode (piped, or `--output json`) prints a warning on stderr and the command still runs, so unattended callers such as Dagster ops keep working. Agents should always pass it — without it a run cannot be joined to a goal. `SUMCLI_INTENT` sets the string for a session. `--intent` is a root option and must precede the subcommand. `SUMCLI_NO_INTENT=1` is an org-level kill switch: the header is not attached, the missing-intent warning is skipped, and an oversized value is not refused.
+
+No warning at all for: discovery (`sumcli` with no args), `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups. `auth` and `config` set up the session before there is a goal to state; `filesystem` talks to the external storage provider with that provider's credentials and never reaches sum-api. The value is normalized to one line, control characters are removed, and it is limited to 500 bytes after encoding — so non-ASCII text gets fewer than 500 characters. An oversized intent is refused with `INTENT_TOO_LONG`, since that value would go on the wire.
 
 Project-scoped commands accept `--project` when no default project is configured.
 
@@ -357,12 +494,18 @@ OpenAPI drift is guarded offline against the bundled snapshot at `sum_cli/data/o
 ```bash
 python -m pytest tests/test_openapi_contract.py tests/test_load_spec.py -q
 # refresh snapshot after sum-api ships new routes:
-python scripts/refresh_openapi.py
-# verify bundled snapshot matches production (nightly automation + manual pre-release):
-python scripts/refresh_openapi.py --check
+python scripts/refresh_openapi.py --base-url https://sandbox-api.summation.com
+# verify the bundled snapshot still matches the host it was taken from:
+python scripts/refresh_openapi.py --check --base-url https://sandbox-api.summation.com
 ```
 
-Per-PR CI gates on the offline contract tests above only. Production reconciliation runs on a schedule via `.github/workflows/sumcli-openapi-snapshot.yaml` so unrelated backend PRs are not reddened when sum-api deploys ahead of the snapshot.
+The committed snapshot tracks **sandbox**. `row_format` is now live on both `sandbox-api` and `api.summation.com`, so either base URL refreshes a snapshot that carries it.
+
+Per-PR CI (`.github/workflows/ci.yml`) runs `pytest -q` plus the installer tests, so it gates on the offline contract tests above only — it never reaches the network. Reconciling the snapshot against its source host is a manual step (`--check`), which keeps unrelated backend PRs from reddening when sum-api deploys ahead of the snapshot, but also means nothing notices the drift on its own.
+
+The contract tests cover paths, methods, query params, and — for request schemas that set `additionalProperties: false` — the top-level JSON body keys a call site sends literally. That last check only sees `json={...}` written inline; payloads assembled in a local variable are skipped, as are the many operations whose schemas accept unknown fields. It is deliberately sound rather than broad: it will not report a field that is fine, but it cannot vouch for every request body.
+
+A body field the CLI sends ahead of the snapshot's host is therefore a red suite until that snapshot is refreshed. That is the intended gate — a closed schema rejects unknown fields outright, so shipping early means a 422 on every call, not a degraded response. Because the snapshot tracks sandbox, the gate proves `queries run` against sandbox; production accepts `row_format` as well, but a field that reaches sandbox first is unproven there until it deploys.
 
 Command-tree action blurbs for API-backed commands are derived from the snapshot at runtime via `sum_cli/openapi_doc.py`; `config` and other local-only actions stay hand-written there. Composite commands (`tables import`, `reports verify`) have known doc/route alignment gaps — see comments in `openapi_doc.py`.
 
@@ -371,12 +514,13 @@ Command-tree action blurbs for API-backed commands are derived from the snapshot
 # Resource group titles and command one-line summaries: sum_cli/openapi_doc.py
 # (_RESOURCE_DESCRIPTIONS, _LOCAL_ACTION_BLURBS, apply_openapi_help). Do not duplicate
 # Typer group help= or command docstrings in resource modules.
-- OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`).
+- OpenAPI at `${SUM_API_BASE_URL}/openapi.json` is the contract source of truth; `sum_cli/data/openapi_snapshot.json` is the offline copy shipped in the wheel and reconciled by `tests/test_openapi_contract.py` (CLI call sites must exist in the spec; uncovered spec operations must be allow-listed in `sum_cli/openapi_doc.py`; literal request-body keys must be declared by any schema that forbids unknown fields).
 - No imports from sum-api service code or gRPC clients.
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` is gated because a manual run delivers real email immediately; the refusal names the recipients first.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).
+- `queries run` requests `row_format: "rows"`, so the API omits the duplicate `rowsWithColumnOrder` copy of every cell that the CLI never reads. Two consequences: column names arrive camelCased (`order_id` as `orderId`), and output columns that collide after camelCasing — or that the query aliased to the same name — collapse into one. Alias explicitly when a query would otherwise produce either. A result carrying no `rows` key is an error (`QUERY_ROWS_MISSING`) rather than zero rows, so a representation mismatch cannot be mistaken for an empty table.
 
 ### Network boundary
 

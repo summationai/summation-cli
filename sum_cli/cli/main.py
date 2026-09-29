@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import httpx
 import typer
 
 from sum_cli import __version__, debug_log
 from sum_cli.auth import AuthError
-from sum_cli.client import ApiError
+from sum_cli.client import ApiError, resolve_http_timeout
 from sum_cli.config import Config, load
+from sum_cli.constants import MAX_HTTP_TIMEOUT_SECONDS
+from sum_cli.intent import resolve_intent
 from sum_cli.openapi_doc import (
     OpenApiSpecError,
     apply_openapi_help,
@@ -21,6 +24,7 @@ from sum_cli.output import (
     emit,
     emit_error,
     err,
+    invalid_request,
     param,
     resolve_output_mode,
     set_output_mode,
@@ -41,8 +45,11 @@ from sum_cli.resources import (
     schedules,
     tables,
     tenant,
+    verification_tests,
     views,
+    workflows,
 )
+from sum_cli.update_check import run_upgrade, warn_if_outdated
 
 
 @dataclass
@@ -50,6 +57,8 @@ class CliContext:
     profile: str | None
     base_url: str | None
     verbose: bool = False
+    intent: str | None = None
+    timeout: float | None = None
 
     def config(self, *, profile: str | None = None) -> Config:
         return load(profile=profile or self.profile, base_url=self.base_url)
@@ -69,6 +78,7 @@ app.add_typer(chats.app, name="chats")
 app.add_typer(reports.app, name="reports")
 app.add_typer(playbooks.app, name="playbooks")
 app.add_typer(schedules.app, name="schedules")
+app.add_typer(workflows.app, name="workflows")
 app.add_typer(files.app, name="files")
 app.add_typer(filesystem.app, name="filesystem")
 app.add_typer(catalog.app, name="catalog")
@@ -77,6 +87,7 @@ app.add_typer(tables.app, name="tables")
 app.add_typer(views.app, name="views")
 app.add_typer(grid.app, name="grid")
 app.add_typer(queries.app, name="queries")
+app.add_typer(verification_tests.app, name="verification-tests")
 
 apply_openapi_help(app)
 
@@ -95,8 +106,28 @@ def _output_callback(value: OutputChoice | None) -> OutputChoice | None:
     return value
 
 
+def _timeout_callback(value: float | None) -> float | None:
+    """Range-check --timeout / SUMCLI_TIMEOUT at parse time.
+
+    Click already rejects non-numeric values. Out-of-range is bad input too, so
+    it must surface as INVALID_REQUEST, not as INTERNAL_ERROR from the catch-all
+    in main() with "retry" advice that can never succeed.
+    """
+    if value is None:
+        return None
+    try:
+        return resolve_http_timeout(value)
+    except ValueError as e:
+        invalid_request(
+            str(e),
+            "Pass --timeout (or set SUMCLI_TIMEOUT) a positive number of seconds, "
+            f"at most {int(MAX_HTTP_TIMEOUT_SECONDS)}, placed before the subcommand.",
+        )
+
+
 def _version_callback(value: bool) -> None:
     if value:
+        warn_if_outdated()
         emit(
             {
                 "ok": True,
@@ -129,7 +160,8 @@ def _api_error_guidance(*, status: int, code: str, message: str) -> tuple[str, l
                 action("Show config", "sumcli config active"),
                 action(
                     "Update credentials",
-                    "sumcli config set-profile <name> --client-id <id> --client-secret <secret> --login",
+                    "sumcli config set-profile <name> --client-id <id> "
+                    "--client-secret <secret> --login",
                     params={
                         "name": param("Profile name"),
                         "id": param("M2M client id"),
@@ -200,12 +232,44 @@ def _root(
         is_flag=True,
         help="Log auth/HTTP debug details to stderr (no secrets).",
     ),
+    intent: str = typer.Option(  # noqa: B008
+        None,
+        "--intent",
+        envvar="SUMCLI_INTENT",
+        help="The human's request, using their words when possible (not a "
+        "command summary). Optional, but strongly recommended for agents: "
+        "without it a run cannot be joined to a goal, and sumcli warns on "
+        'stderr. Example: --intent "convert my weekly recap".',
+    ),
+    timeout: float | None = typer.Option(  # noqa: B008
+        None,
+        "--timeout",
+        envvar="SUMCLI_TIMEOUT",
+        callback=_timeout_callback,
+        help="HTTP timeout in seconds for sum-api calls (default 120). "
+        "Place before the subcommand. grid create / tables upsert often "
+        "need more than 30s; a timeout is not proof the write failed.",
+    ),
 ) -> None:
     debug_log.set_verbose(verbose)
     # `output` is resolved by its eager callback (_output_callback) before this body
     # runs, so the mode is already set here; nothing more to do with it.
     del output
-    ctx.obj = CliContext(profile=profile, base_url=base_url, verbose=verbose)
+    # Normalize only. commands.checked_intent warns about a missing intent at the
+    # point a command actually calls sum-api — this callback also runs for
+    # discovery and --help, which must never be refused.
+    ctx.obj = CliContext(
+        profile=profile,
+        base_url=base_url,
+        verbose=verbose,
+        intent=resolve_intent(intent),
+        timeout=timeout,
+    )
+    # Verification bundle validation and mutation dry-runs are deliberately
+    # network-free. Skip the opportunistic PyPI update check for this resource
+    # so that promise applies to the complete invocation, not only its API call.
+    if ctx.invoked_subcommand not in {"update", "verification-tests"}:
+        warn_if_outdated()
     if ctx.invoked_subcommand is None:
         try:
             emit(build_command_tree_envelope())
@@ -214,11 +278,18 @@ def _root(
                 err(
                     "OPENAPI_SPEC_MISSING",
                     str(exc),
-                    "Reinstall summation-cli (pipx install --force …) or run from a source checkout.",
+                    "Reinstall summation-cli (pipx install --force …) or run from a "
+                    "source checkout.",
                     next_actions=[action("Show version", "sumcli --version")],
                 )
             )
         raise typer.Exit()
+
+
+@app.command("update")
+def update_cli() -> None:
+    """Install the latest PyPI release of a uv-managed sumcli, including over a version pin."""
+    run_upgrade()
 
 
 def main() -> None:
@@ -232,7 +303,8 @@ def main() -> None:
             err(
                 "AUTH_ERROR",
                 str(e),
-                "Configure a profile, then run sumcli auth login. Use sumcli auth login --m2m for machine credentials.",
+                "Configure a profile, then run sumcli auth login. Use sumcli auth login "
+                "--m2m for machine credentials.",
                 next_actions=[
                     action("Show config", "sumcli config active"),
                     action(
@@ -251,6 +323,32 @@ def main() -> None:
         if e.method and e.url:
             debug_log.log_api_error(e.status, e.body, method=e.method, url=e.url)
         emit_error(_api_error_envelope(e))
+    except httpx.TimeoutException as e:
+        emit_error(
+            err(
+                "NETWORK_ERROR",
+                str(e),
+                "The request exceeded the HTTP timeout. The server may still have "
+                "accepted the write — re-list or re-query before retrying. Raise "
+                "the limit with --timeout or SUMCLI_TIMEOUT (default 120s).",
+                next_actions=[
+                    action("Show config", "sumcli config active"),
+                    action("Show version", "sumcli --version"),
+                ],
+            )
+        )
+    except httpx.HTTPError as e:
+        emit_error(
+            err(
+                "NETWORK_ERROR",
+                str(e),
+                "Check that you are online and that the profile base URL is reachable.",
+                next_actions=[
+                    action("Show config", "sumcli config active"),
+                    action("Show version", "sumcli --version"),
+                ],
+            )
+        )
     except Exception as e:
         emit_error(
             err(

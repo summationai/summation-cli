@@ -5,8 +5,8 @@ from __future__ import annotations
 import io
 import json
 import sys
-from pathlib import Path
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +14,8 @@ from typer.testing import CliRunner
 
 from sum_cli.cli.main import app, main
 from sum_cli.client import ApiError
+from sum_cli.openapi_doc import load_spec
+from sum_cli.resources import tables
 
 runner = CliRunner()
 
@@ -152,6 +154,46 @@ def test_tables_append_requires_one_source(monkeypatch) -> None:
     assert body["error"]["code"] == "INVALID_FLAGS"
 
 
+def test_tables_append_rejects_empty_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_cm, mock_client = _append_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "append", "tbl-1", "--rows", "[]"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_ROWS"
+    mock_client.request.assert_not_called()
+
+
+def test_tables_append_rejects_too_many_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    rows = json.dumps([{"s_id": str(i)} for i in range(501)])
+    mock_cm, mock_client = _append_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "append", "tbl-1", "--rows", rows])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_ROWS"
+    assert "501 rows" in body["error"]["message"]
+    mock_client.request.assert_not_called()
+
+
+def test_tables_append_missing_file_is_a_cli_error(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    missing = tmp_path / "missing.json"
+    mock_cm, mock_client = _append_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "append", "tbl-1", "--file", str(missing)])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "Cannot read --file" in body["error"]["message"]
+    mock_client.request.assert_not_called()
+
+
 def test_tables_append_partial_exits_nonzero(monkeypatch) -> None:
     monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
@@ -224,6 +266,111 @@ def test_tables_append_none_exits_nonzero(monkeypatch) -> None:
     assert "No rows were appended" in body["error"]["message"]
 
 
+def _upsert_mock() -> tuple[MagicMock, MagicMock]:
+    mock_client = MagicMock()
+    mock_client.request.return_value = {"data": {"inserted": 1, "updated": 0, "errors": []}}
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_client
+    mock_cm.__exit__.return_value = None
+    return mock_cm, mock_client
+
+
+def test_tables_upsert_rows_inline(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_cm, mock_client = _upsert_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "upsert",
+                "tbl-1",
+                "--rows",
+                '[{"event_id": "550e8400-e29b-41d4-a716-446655440000", "op": "x"}]',
+            ],
+        )
+    assert result.exit_code == 0
+    body = json.loads(result.stdout.strip())
+    assert body["ok"] is True
+    method, path = mock_client.request.call_args.args[0], mock_client.request.call_args.args[1]
+    assert method == "PUT"
+    assert path == "/v1/tables/tbl-1/rows"
+    assert mock_client.request.call_args.kwargs["json"] == {
+        "rows": [{"event_id": "550e8400-e29b-41d4-a716-446655440000", "op": "x"}]
+    }
+
+
+def test_tables_upsert_sends_key_columns(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_cm, mock_client = _upsert_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "upsert",
+                "tbl-1",
+                "--rows",
+                '[{"event_id": "a"}]',
+                "--key-column",
+                "event_id",
+            ],
+        )
+    assert result.exit_code == 0
+    sent = mock_client.request.call_args.kwargs["json"]
+    assert sent["key_columns"] == ["event_id"]
+
+
+def test_tables_upsert_rejects_s_id_in_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    result = runner.invoke(
+        app,
+        ["tables", "upsert", "tbl-1", "--rows", '[{"s_id": 1, "event_id": "a"}]'],
+    )
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip())
+    assert body["error"]["code"] == "INVALID_ROWS"
+
+
+def test_tables_upsert_rejects_empty_rows(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_cm, mock_client = _upsert_mock()
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(app, ["tables", "upsert", "tbl-1", "--rows", "[]"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip().split("\n")[-1])
+    assert body["error"]["code"] == "INVALID_ROWS"
+    mock_client.request.assert_not_called()
+
+
+def test_tables_upsert_partial_exits_nonzero(monkeypatch) -> None:
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    mock_client = MagicMock()
+    mock_client.request.return_value = {
+        "data": {
+            "inserted": 1,
+            "updated": 0,
+            "errors": [{"code": "INVALID_DATA_ENTRY", "message": "bad row"}],
+        }
+    }
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_client
+    mock_cm.__exit__.return_value = None
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            ["tables", "upsert", "tbl-1", "--rows", '[{"event_id": "a"}]'],
+        )
+    assert result.exit_code == 1
+    body = json.loads(result.stdout.strip())
+    assert body["error"]["code"] == "UPSERT_PARTIAL"
+
+
 def test_tables_import_wait_failed_status_exits_nonzero(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
@@ -261,3 +408,378 @@ def test_tables_import_wait_failed_status_exits_nonzero(monkeypatch, tmp_path: P
     assert last["type"] == "error"
     assert last["ok"] is False
     assert last["error"]["code"] == "IMPORT_FAILED"
+
+
+def test_tables_import_default_is_new_without_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            ["tables", "import", "--table", "t1", "--local", "--path", str(csv), "--no-wait"],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.args[1] == "/v1/table-imports"
+    assert not post.kwargs.get("params")
+    assert post.kwargs["json"]["import_type"] == "NEW"
+
+
+def test_tables_import_refresh_sends_full_refresh_and_confirm(monkeypatch, tmp_path: Path) -> None:
+    """--refresh replaces an existing table's rows: the API requires confirm=true
+    for FULL_REFRESH, and the explicit flag is the user's confirmation."""
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--refresh",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.args[1] == "/v1/table-imports"
+    assert post.kwargs["params"] == {"confirm": "true"}
+    assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
+
+
+def test_tables_import_explicit_full_refresh_requires_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    result = runner.invoke(
+        app,
+        [
+            "tables",
+            "import",
+            "--table",
+            "t1",
+            "--local",
+            "--path",
+            str(csv),
+            "--no-wait",
+            "--import-type",
+            "FULL_REFRESH",
+        ],
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "--confirm" in body["fix"]
+
+
+def test_tables_import_explicit_full_refresh_with_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--import-type",
+                "FULL_REFRESH",
+                "--confirm",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["params"] == {"confirm": "true"}
+    assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
+
+
+def test_tables_import_type_is_case_insensitive(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--import-type",
+                "full_refresh",
+                "--confirm",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["json"]["import_type"] == "FULL_REFRESH"
+
+
+def test_tables_import_incremental_refresh_requires_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    result = runner.invoke(
+        app,
+        [
+            "tables",
+            "import",
+            "--table",
+            "t1",
+            "--local",
+            "--path",
+            str(csv),
+            "--no-wait",
+            "--import-type",
+            "INCREMENTAL_REFRESH",
+        ],
+    )
+    assert result.exit_code != 0
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert "--confirm" in body["fix"]
+
+
+def test_tables_import_incremental_refresh_with_confirm(monkeypatch, tmp_path: Path) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--import-type",
+                "INCREMENTAL_REFRESH",
+                "--confirm",
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["params"] == {"confirm": "true"}
+    assert post.kwargs["json"]["import_type"] == "INCREMENTAL_REFRESH"
+
+
+def test_tables_import_accepts_top_level_column_mappings_array(
+    monkeypatch, tmp_path: Path
+) -> None:
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mappings = tmp_path / "mappings.json"
+    mappings.write_text('[{"source_column_name": "col1", "target_column_name": "col1"}]')
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--column-mappings-file",
+                str(mappings),
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    assert post.kwargs["json"]["column_mappings"] == [
+        {"source_column_name": "col1", "target_column_name": "col1"}
+    ]
+
+
+def test_tables_import_column_mapping_keys_match_spec(monkeypatch, tmp_path: Path) -> None:
+    """Mapping keys sent to sum-api must be the ones TableImportColumnMapping requires."""
+    spec = load_spec()
+    required = set(spec["components"]["schemas"]["TableImportColumnMapping"]["required"])
+
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mappings = tmp_path / "mappings.json"
+    mappings.write_text(json.dumps({"column_mappings": [dict.fromkeys(required, "col1")]}))
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        result = runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--column-mappings-file",
+                str(mappings),
+            ],
+        )
+    assert result.exit_code == 0
+    client = mock_cm.__enter__.return_value
+    post = next(
+        c
+        for c in client.request.call_args_list
+        if c.args[0] == "POST" and "table-imports" in c.args[1]
+    )
+    for mapping in post.kwargs["json"]["column_mappings"]:
+        assert required <= set(mapping), f"missing required keys: {required - set(mapping)}"
+
+
+def test_column_mapping_key_lists_match_spec() -> None:
+    """The local allowlist must track TableImportColumnMapping, not drift from it."""
+    schema = load_spec()["components"]["schemas"]["TableImportColumnMapping"]
+    assert set(tables._MAPPING_REQUIRED_KEYS) == set(schema["required"])
+    assert set(tables._MAPPING_REQUIRED_KEYS) | set(tables._MAPPING_OPTIONAL_KEYS) == set(
+        schema["properties"]
+    )
+
+
+def _invoke_with_mappings(monkeypatch, tmp_path: Path, payload: str):
+    csv = tmp_path / "data.csv"
+    csv.write_text("col1\n1\n")
+    mappings = tmp_path / "mappings.json"
+    mappings.write_text(payload)
+    mock_cm = _import_mocks(csv)
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    with patch("sum_cli.resources.tables.api_client", return_value=mock_cm):
+        return runner.invoke(
+            app,
+            [
+                "tables",
+                "import",
+                "--table",
+                "t1",
+                "--local",
+                "--path",
+                str(csv),
+                "--no-wait",
+                "--column-mappings-file",
+                str(mappings),
+            ],
+        )
+
+
+def test_tables_import_rejects_camelcase_mapping_keys(monkeypatch, tmp_path: Path) -> None:
+    """A camelCase file is refused locally, with the correct spelling named."""
+    result = _invoke_with_mappings(
+        monkeypatch, tmp_path, '[{"sourceColumn": "col1", "targetColumn": "col1"}]'
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_REQUEST"
+    assert "sourceColumn" in payload["error"]["message"]
+    assert "source_column_name" in payload["fix"]
+    assert "target_column_name" in payload["fix"]
+
+
+def test_tables_import_rejects_unknown_mapping_keys(monkeypatch, tmp_path: Path) -> None:
+    result = _invoke_with_mappings(
+        monkeypatch,
+        tmp_path,
+        '[{"source_column_name": "col1", "target_column_name": "col1", "bogus": 1}]',
+    )
+    assert result.exit_code != 0
+    assert "bogus" in json.loads(result.stdout)["error"]["message"]
+
+
+def test_tables_import_rejects_mapping_missing_required_key(monkeypatch, tmp_path: Path) -> None:
+    result = _invoke_with_mappings(monkeypatch, tmp_path, '[{"source_column_name": "col1"}]')
+    assert result.exit_code != 0
+    assert "target_column_name" in json.loads(result.stdout)["error"]["message"]
+
+
+def test_tables_import_accepts_optional_mapping_keys(monkeypatch, tmp_path: Path) -> None:
+    """Optional spec fields must survive validation and reach the request unchanged."""
+    entry = {
+        "source_column_name": "col1",
+        "target_column_name": "col1",
+        "data_type": "STRING",
+        "nullable": True,
+        "required": False,
+        "unique": False,
+    }
+    result = _invoke_with_mappings(monkeypatch, tmp_path, json.dumps([entry]))
+    assert result.exit_code == 0

@@ -70,6 +70,9 @@ class CallSite:
     # ``params=`` argument was non-literal (a variable or helper call) and we
     # cannot prove which keys are sent — required-param checks skip those.
     query_params: frozenset[str] | None = None
+    # Top-level JSON body keys the call site statically sends. ``None`` means the
+    # ``json=`` argument was non-literal or absent, so body-field checks skip it.
+    body_keys: frozenset[str] | None = None
 
     @property
     def normalized_path(self) -> str:
@@ -86,8 +89,6 @@ class CallSite:
 UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/v1/auth/logout"): "No sumcli logout; sessions are profile-scoped.",
     ("GET", "/v1/chat-models"): "Chat model listing not exposed in sumcli.",
-    ("POST", "/v1/grid/tables"): "Grid calculation-table creation not exposed in sumcli.",
-    ("POST", "/v1/grid/tables/*/materialize"): "Grid materialize not exposed in sumcli.",
     ("POST", "/v1/projects/*/files/uploads"): "Project file uploads not exposed in sumcli.",
     (
         "POST",
@@ -95,14 +96,39 @@ UNCOVERED_OPERATIONS_ALLOWLIST: dict[tuple[str, str], str] = {
     ): "Project file uploads not exposed in sumcli.",
     ("GET", "/v1/projects/*/reports"): "Report listing is via files, not a dedicated command.",
     ("DELETE", "/v1/projects/*/reports/*"): "Report delete is via files delete.",
-    ("GET", "/v1/projects/*/reports/*/content"): "Report content export not exposed in sumcli.",
     ("GET", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
     ("POST", "/v1/sum-apps"): "SumApp management not exposed in sumcli.",
     ("DELETE", "/v1/sum-apps/*"): "SumApp management not exposed in sumcli.",
-    ("POST", "/v1/tables/*/rows"): "Row append not exposed in sumcli.",
-    ("PUT", "/v1/tables/*/rows"): "Row replace not exposed in sumcli.",
     ("GET", "/v1/tables/catalog"): "Tenant-wide table catalog list not exposed in sumcli.",
     ("GET", "/v1/views/catalog"): "Tenant-wide view catalog list not exposed in sumcli.",
+    # Sandbox-only (relative to prior prod snapshot) — not part of workflows coverage.
+    (
+        "PATCH",
+        "/v1/connections/data/*/datasets/*",
+    ): "Connection dataset update not exposed in sumcli.",
+    ("GET", "/v1/data-syncs/*/checkpoint"): "Data-sync checkpoint not exposed in sumcli.",
+    ("POST", "/v1/data-syncs/*/pages"): "Data-sync page upload not exposed in sumcli.",
+    ("GET", "/v1/data-syncs/*/pages/*"): "Data-sync page status not exposed in sumcli.",
+    (
+        "POST",
+        "/v1/tables/*/ingestion-batches",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "GET",
+        "/v1/tables/*/ingestion-batches/*",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "DELETE",
+        "/v1/tables/*/ingestion-batches/*",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "POST",
+        "/v1/tables/*/ingestion-batches/*/commit",
+    ): "Table ingestion batches not exposed in sumcli.",
+    (
+        "POST",
+        "/v1/tables/*/ingestion-batches/*/parts/*/upload-url",
+    ): "Table ingestion batches not exposed in sumcli.",
 }
 
 
@@ -228,6 +254,25 @@ def _query_params_from_node(node: ast.AST | None) -> frozenset[str] | None:
     return None
 
 
+def _body_keys_from_node(node: ast.AST | None) -> frozenset[str] | None:
+    """Extract top-level keys from a literal ``json=`` dict.
+
+    Only constant string keys are reported. A partial set is sound for the check
+    this feeds: every key returned is definitely sent, so an unknown-field match is
+    never a false positive. Payloads assembled in a variable yield ``None``.
+    """
+    if not isinstance(node, ast.Dict):
+        return None
+    keys = {
+        key.value
+        for key in node.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    # An empty literal (``json={}``) collapses to the same ``None`` as a variable
+    # payload; harmless, since a body sending nothing cannot send an undeclared field.
+    return frozenset(keys) or None
+
+
 class _CallSiteCollector(ast.NodeVisitor):
     """Collect sum-api call sites from a function body.
 
@@ -258,6 +303,7 @@ class _CallSiteCollector(ast.NodeVisitor):
         path: str,
         query_params: frozenset[str] | None = None,
         params_node: ast.AST | None = None,
+        body_node: ast.AST | None = None,
     ) -> None:
         resolved_params = query_params
         if params_node is not None:
@@ -268,14 +314,18 @@ class _CallSiteCollector(ast.NodeVisitor):
                 path=path,
                 source=self.source,
                 query_params=resolved_params,
+                body_keys=_body_keys_from_node(body_node),
             )
         )
 
-    def _params_kwarg(self, node: ast.Call) -> ast.AST | None:
+    def _kwarg(self, node: ast.Call, name: str) -> ast.AST | None:
         for kw in node.keywords:
-            if kw.arg == "params":
+            if kw.arg == name:
                 return kw.value
         return None
+
+    def _params_kwarg(self, node: ast.Call) -> ast.AST | None:
+        return self._kwarg(node, "params")
 
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute) and node.func.attr in self._CLIENT_METHODS:
@@ -287,18 +337,19 @@ class _CallSiteCollector(ast.NodeVisitor):
                         method=method,
                         path=path,
                         params_node=self._params_kwarg(node),
+                        body_node=self._kwarg(node, "json"),
                     )
         elif isinstance(node.func, ast.Name) and node.func.id == "post_with_wait_follow":
             if len(node.args) >= 3:
                 method = _method_from_node(node.args[1])
                 path = _path_template_from_node(node.args[2], self._env)
                 if method and path:
-                    self._append_site(method=method, path=path)
+                    self._append_site(method=method, path=path, body_node=self._kwarg(node, "json"))
         elif isinstance(node.func, ast.Attribute) and node.func.attr == "post":
             if len(node.args) >= 1:
                 path = _path_template_from_node(node.args[0], self._env)
                 if path:
-                    self._append_site(method="POST", path=path)
+                    self._append_site(method="POST", path=path, body_node=self._kwarg(node, "json"))
         self.generic_visit(node)
 
 
@@ -469,6 +520,22 @@ def blurb_for_call_site(site: CallSite, summaries: dict[tuple[str, str], str]) -
     )
 
 
+def allowlisted_operations_now_covered(spec: dict) -> list[Operation]:
+    """Allow-listed operations a command has since started calling.
+
+    An entry says "not exposed in sumcli". Once a command calls the route the entry is a
+    lie that nothing else catches: ``uncovered_spec_operations`` skips covered operations,
+    so the stale reason survives every refresh. ``grid create`` and ``grid materialize``
+    both carried one for two releases.
+    """
+    covered = cli_operation_keys()
+    allowlisted = set(UNCOVERED_OPERATIONS_ALLOWLIST)
+    return sorted(
+        (op for op in iter_operations(spec) if op.key in allowlisted and op.key in covered),
+        key=lambda o: (o.normalized_path, o.method),
+    )
+
+
 def uncovered_spec_operations(spec: dict) -> list[Operation]:
     covered = cli_operation_keys()
     allowlisted = set(UNCOVERED_OPERATIONS_ALLOWLIST)
@@ -528,6 +595,74 @@ def cli_call_sites_missing_confirm(spec: dict) -> list[CallSite]:
     return sorted(missing, key=lambda s: (s.normalized_path, s.source))
 
 
+def _resolve_ref(spec: dict, node: object) -> dict:
+    """Follow a single ``$ref`` into ``components``; returns ``{}`` when unresolvable."""
+    if not isinstance(node, dict):
+        return {}
+    ref = node.get("$ref")
+    if not isinstance(ref, str):
+        return node
+    if not ref.startswith("#/"):
+        return {}
+    target: object = spec
+    for part in ref[2:].split("/"):
+        if not isinstance(target, dict) or part not in target:
+            return {}
+        target = target[part]
+    return target if isinstance(target, dict) else {}
+
+
+def _request_body_schema(spec: dict, method: str, path: str) -> dict:
+    """Request-body schema for an operation, matched on the normalized path.
+
+    CLI f-strings and spec templates name parameters differently
+    (``/v1/projects/{pid}`` vs ``/v1/projects/{project_id}``), so a literal lookup
+    silently misses every parameterized route.
+    """
+    wanted = (method.upper(), normalize_path(path))
+    op: dict = {}
+    for spec_path, item in spec.get("paths", {}).items():
+        if not isinstance(item, dict) or normalize_path(spec_path) != wanted[1]:
+            continue
+        candidate = item.get(method.lower())
+        if isinstance(candidate, dict):
+            op = candidate
+            break
+    if not op:
+        return {}
+    content = _resolve_ref(spec, op.get("requestBody")).get("content")
+    if not isinstance(content, dict):
+        return {}
+    media = content.get("application/json")
+    if not isinstance(media, dict):
+        return {}
+    return _resolve_ref(spec, media.get("schema"))
+
+
+def call_sites_sending_unknown_body_fields(spec: dict) -> list[tuple[CallSite, frozenset[str]]]:
+    """Call sites posting literal JSON keys a closed request schema does not declare.
+
+    Only schemas with ``additionalProperties: false`` are checked: those reject
+    unknown fields outright, so a key the CLI sends but the contract omits is a 422
+    waiting to happen rather than a harmless extra. Nothing else in the suite reads
+    request bodies, so a mistyped or not-yet-deployed field is otherwise invisible.
+    """
+    offenders: list[tuple[CallSite, frozenset[str]]] = []
+    for site in cli_call_sites():
+        if not site.body_keys:
+            continue
+        schema = _request_body_schema(spec, site.method, site.path)
+        if schema.get("additionalProperties") is not False:
+            continue
+        declared = schema.get("properties")
+        if not isinstance(declared, dict):
+            continue
+        unknown = site.body_keys - set(declared)
+        if unknown:
+            offenders.append((site, frozenset(unknown)))
+    return sorted(offenders, key=lambda pair: (pair[0].normalized_path, pair[0].method))
+
+
 def _humanize_operation_id(operation_id: str | None) -> str | None:
     if not operation_id:
         return None
@@ -542,21 +677,28 @@ def _humanize_operation_id(operation_id: str | None) -> str | None:
 # Resource groupings stay curated in this module (see also apply_openapi_help).
 _RESOURCE_DESCRIPTIONS: dict[str, str] = {
     "auth": "Inspect authentication state.",
-    "config": "Manage config profiles and the active working session (default ~/.summation/summation-config; override with SUMMATION_CONFIG_FILE).",
+    "config": (
+        "Manage config profiles and the active working session (default "
+        "~/.summation/summation-config; override with SUMMATION_CONFIG_FILE)."
+    ),
     "tenant": "Organization and tenant metadata.",
     "projects": "Manage projects.",
     "chats": "Chats (Addison conversations).",
     "reports": "Generate and verify reports (.sdoc). List/download/delete via files.",
     "playbooks": "Playbook discovery.",
     "schedules": "Recurring playbook schedules and their runs.",
+    "workflows": "Multi-step automations (typed graphs): create, activate, and run.",
     "files": "Project-scoped files.",
     "filesystem": "External storage providers (SharePoint).",
     "catalog": "Project catalog entries (tables/views attached to project).",
     "connections": "External data source connections.",
     "tables": "Canonical tables and imports.",
     "views": "Summation views.",
-    "grid": "Grid status, sync, and lineage.",
+    "grid": "Grid status, sync, lineage, and table creation (calc or data).",
     "queries": "Read-only SQL execution.",
+    "verification-tests": (
+        "Custom verification-test definitions, scoped overlays, and effective-set previews."
+    ),
 }
 
 # Hand-written action blurbs (see sum_cli/resources/__init__.py — do not duplicate in handlers).
@@ -571,7 +713,9 @@ _RESOURCE_DESCRIPTIONS: dict[str, str] = {
 #   (same pattern as _STREAMING_ACTION_SUFFIXES on reports.generate).
 _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
     "auth": {
-        "login": "Start interactive device login by default; use --m2m to persist a machine session.",
+        "login": (
+            "Start interactive device login by default; use --m2m to persist a machine session."
+        ),
         "logout": "Revoke the stored device-login credential for the profile.",
         "token": "Show redacted bearer token for the active session.",
         # ``whoami`` (GET /v1/me) and ``status`` (GET /v1/auth/status) both carry the
@@ -587,7 +731,7 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "use": "Switch active profile; optional --project sets default_project.",
         "set-project": "Set default_project for the active (or --profile) profile.",
         "clear-project": "Clear default_project for the active (or --profile) profile.",
-        "import-env": "Import SUM_API_* from a skill-style env file into a profile.",
+        "import-env": "Import SUM_API_* from an env file into a profile in summation-config.",
         "set-profile": "Create or replace a profile.",
         "copy-profile": "Clone a profile under a new name.",
         "delete-profile": "Remove a profile (--confirm).",
@@ -602,6 +746,11 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         # "Disconnect" and "delete" differ subtly: disconnect revokes the agent's
         # access but keeps the record, so say which one this is.
         "app-disconnect": "Revoke the agent's access to an app connection, keeping the record.",
+        # Spec summary ("Detach connection dataset") does not mention --confirm or
+        # that DELETE returns before teardown finishes, which is why --wait exists.
+        "detach-dataset": (
+            "Detach a dataset from a connection (--confirm; --wait polls until gone)."
+        ),
     },
     "reports": {
         "verify": "Verify a report or document by file id (--wait/--no-wait, --follow).",
@@ -619,8 +768,41 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "run": "Run a schedule now, delivering its output and email (--confirm).",
         "delete": "Delete a schedule (--confirm).",
     },
+    "workflows": {
+        # PUT is a full replace for triggers; the CLI keeps existing triggers unless
+        # --triggers-file is set, and supports --body-file for GET→PUT round-trips.
+        "update": (
+            "Replace a workflow's editable state (--expected-revision). "
+            "Carries description, output folder, and triggers from show/GET "
+            "unless overridden; optional --body-file for a full round-trip."
+        ),
+        "activate": (
+            "Freeze the current graph as the running version (--expected-revision, --confirm)."
+        ),
+        "run": (
+            "Run a workflow now (--confirm); --version defaults from activeVersionId; "
+            "--request-id is an idempotency UUID."
+        ),
+        "run-show": "Show one workflow run's per-step detail.",
+        "node-types": "List node type ids and configs this organization may author.",
+    },
+    "grid": {
+        # The bundled snapshot is prod-pinned and still carries the pre-kind summary
+        # ("Create calculation table"), which now names only one of the two kinds.
+        # Drop this entry once a refresh brings "Create grid table" down from prod.
+        "create": (
+            "Create a grid table: --kind calc (default) from --query, "
+            "or --kind data as an empty appendable table from --column/--columns-file."
+        ),
+        "materialize": "Materialize a CALCULATION table (run its SELECT; --dry-run optional).",
+    },
     "tables": {
-        "import": "Import from local file (multi-step; --wait/--no-wait).",
+        "import": (
+            "Import from local or project file (--wait/--no-wait; "
+            "--import-type, --confirm, --column-mappings-file)."
+        ),
+        "append": "Append rows from --rows or --file; each row must include s_id (append-only).",
+        "upsert": "Upsert rows by business key from --rows or --file (no s_id in rows).",
     },
     "filesystem": {
         "roots": "List drives/roots for the configured site (--provider sharepoint).",
@@ -632,6 +814,21 @@ _LOCAL_ACTION_BLURBS: dict[str, dict[str, str]] = {
         "set-defaults": "Persist --root/--path defaults in config (--provider required).",
         "import-env": (
             "Import SHAREPOINT_* from a skill-style env file into ~/.summation/summation-config."
+        ),
+    },
+    "verification-tests": {
+        "validate": "Validate a custom-test bundle offline without authenticating or sending it.",
+        "upload": (
+            "Validate and create custom verification-test definitions (--dry-run stays offline)."
+        ),
+        "list": "List custom verification-test definitions, optionally filtered and bounded.",
+        "attach": (
+            "Create an add overlay or a removal overlay at tenant, project, or artifact scope."
+        ),
+        "list-attachments": "List active raw attachments, including the ids used by detach.",
+        "detach": "Soft-detach an attachment by id (--confirm; distinct from a removal overlay).",
+        "preview": (
+            "Preview the complete inherited verification-test set and provenance for a scope."
         ),
     },
 }
@@ -747,10 +944,14 @@ def build_command_tree_envelope() -> dict:
         {
             "name": "sumcli",
             "version": __version__,
-            "description": "sumcli — public Summation CLI (sum-api /v1). Pattern: sumcli <resource> <action> [--flags]",
+            "description": (
+                "sumcli — public Summation CLI (sum-api /v1). Pattern: "
+                "sumcli <resource> <action> [--flags]"
+            ),
             "resources": build_resources(),
         },
         next_actions=[
+            action("Upgrade sumcli", "sumcli update"),
             action("Show active identity", "sumcli auth whoami"),
             action("List profiles", "sumcli config list"),
             action(

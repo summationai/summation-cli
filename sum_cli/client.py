@@ -2,15 +2,42 @@
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import httpx
 
-from sum_cli import debug_log
+from sum_cli import __version__, debug_log
 from sum_cli.auth import TokenResult, acquire_token, token_cache_valid
 from sum_cli.config import Config, load
+from sum_cli.constants import (
+    DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
+    MAX_HTTP_TIMEOUT_SECONDS,
+)
+from sum_cli.intent import INTENT_HEADER, encode_intent_header, intent_disabled
+
+
+def resolve_http_timeout(explicit: float | None = None) -> float:
+    """Seconds for sum-api read/write. ``explicit`` wins, then ``SUMCLI_TIMEOUT``."""
+    if explicit is None:
+        raw = os.environ.get("SUMCLI_TIMEOUT", "").strip()
+        value = float(raw) if raw else DEFAULT_HTTP_TIMEOUT_SECONDS
+    else:
+        value = float(explicit)
+    if value <= 0 or value > MAX_HTTP_TIMEOUT_SECONDS:
+        raise ValueError(
+            f"HTTP timeout must be in (0, {int(MAX_HTTP_TIMEOUT_SECONDS)}] seconds, got {value}"
+        )
+    return value
+
+
+def build_http_timeout(read: float) -> httpx.Timeout:
+    """httpx budget for an already-resolved read timeout. Connect stays short."""
+    return httpx.Timeout(read, connect=min(DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS, read))
 
 
 class ApiError(RuntimeError):
@@ -52,12 +79,40 @@ def _token_cache_key(cfg: Config) -> tuple:
     return ("m2m", cfg.profile, cfg.base_url, cfg.client_id, cfg.client_secret, cfg.m2m_scope)
 
 
+def user_agent() -> str:
+    """``sumcli/<version>``, plus a caller-context comment when the invoking
+    surface sets SUMCLI_CLIENT_CONTEXT (the plugins set e.g.
+    ``claude-plugin/0.4.0; claude-code``). sum-api's access log derives its
+    ``client_surface`` analytics field from these tokens, so the context must
+    stay a short product token, never free text or anything user-identifying.
+    """
+    ua = f"sumcli/{__version__}"
+    context = os.environ.get("SUMCLI_CLIENT_CONTEXT", "").strip()
+    # UA comments cannot contain parentheses or control chars; cap the length
+    # so a misconfigured env var cannot bloat every request.
+    context = re.sub(r"[^A-Za-z0-9./;: _+-]", "", context)[:64].strip()
+    if context:
+        ua = f"{ua} ({context})"
+    return ua
+
+
 class Client:
     _token_cache: dict[tuple, TokenResult] = {}
 
-    def __init__(self, cfg: Config | None = None):
+    def __init__(
+        self,
+        cfg: Config | None = None,
+        *,
+        intent: str | None = None,
+        timeout: float | None = None,
+    ):
         self.cfg = cfg or load()
-        self._http = httpx.Client(timeout=30.0)
+        self.intent = intent
+        self.timeout = resolve_http_timeout(timeout)
+        self._http = httpx.Client(
+            timeout=build_http_timeout(self.timeout),
+            headers={"User-Agent": user_agent()},
+        )
 
     @classmethod
     def clear_token_cache(cls) -> None:
@@ -83,6 +138,8 @@ class Client:
             debug_log.log_bearer_token(cached.access_token, operation="token(cache)")
             return cached
         debug_log.debug("acquiring token via %s", debug_log.token_source_label(self.cfg))
+        # Token exchange uses this client (User-Agent only). Intent is attached
+        # in `_headers`, which the auth path never calls.
         result = acquire_token(self.cfg, self._http)
         Client._token_cache[key] = result
         debug_log.log_bearer_token(result.access_token, operation="token(acquired)")
@@ -90,6 +147,8 @@ class Client:
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         h = {"Authorization": f"Bearer {self._token_result().access_token}"}
+        if self.intent and not intent_disabled():
+            h[INTENT_HEADER] = encode_intent_header(self.intent)
         if extra:
             h.update(extra)
         return h

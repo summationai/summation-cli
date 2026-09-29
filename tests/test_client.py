@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from sum_cli.auth import (
     TokenResult,
     exchange_m2m_token,
@@ -185,3 +187,84 @@ def test_client_refetches_when_device_login_credential_changes(monkeypatch) -> N
         assert c2.token() == "sm_dls_b"
 
     Client.clear_token_cache()
+
+
+def test_user_agent_default(monkeypatch):
+    monkeypatch.delenv("SUMCLI_CLIENT_CONTEXT", raising=False)
+    from sum_cli import __version__
+    from sum_cli.client import user_agent
+
+    assert user_agent() == f"sumcli/{__version__}"
+
+
+def test_user_agent_includes_sanitized_context(monkeypatch):
+    from sum_cli import __version__
+    from sum_cli.client import user_agent
+
+    monkeypatch.setenv("SUMCLI_CLIENT_CONTEXT", "claude-plugin/0.4.0; claude-code")
+    assert user_agent() == f"sumcli/{__version__} (claude-plugin/0.4.0; claude-code)"
+
+    # Parentheses and control characters are stripped, length capped: the
+    # context must not be able to corrupt the UA comment or bloat requests.
+    monkeypatch.setenv("SUMCLI_CLIENT_CONTEXT", "evil()\r\nplugin" + "x" * 200)
+    value = user_agent()
+    assert "(" in value and value.endswith(")")
+    inner = value.split("(", 1)[1].rstrip(")")
+    assert "(" not in inner and ")" not in inner and "\n" not in inner
+    assert len(inner) <= 64
+
+
+def test_default_http_timeout_is_120(monkeypatch):
+    monkeypatch.delenv("SUMCLI_TIMEOUT", raising=False)
+    from sum_cli.client import resolve_http_timeout
+    from sum_cli.constants import DEFAULT_HTTP_TIMEOUT_SECONDS
+
+    assert resolve_http_timeout() == DEFAULT_HTTP_TIMEOUT_SECONDS
+    assert DEFAULT_HTTP_TIMEOUT_SECONDS == 120.0
+
+
+def test_http_timeout_env_and_explicit(monkeypatch):
+    from sum_cli.client import build_http_timeout, resolve_http_timeout
+
+    monkeypatch.setenv("SUMCLI_TIMEOUT", "45")
+    assert resolve_http_timeout() == 45.0
+    assert resolve_http_timeout(90) == 90.0
+    timeout = build_http_timeout(5.0)
+    assert timeout.read == 5.0
+    assert timeout.connect == 5.0
+    timeout = build_http_timeout(120.0)
+    assert timeout.read == 120.0
+    assert timeout.connect == 10.0
+
+
+def test_http_timeout_rejects_invalid(monkeypatch):
+    from sum_cli.client import resolve_http_timeout
+
+    monkeypatch.delenv("SUMCLI_TIMEOUT", raising=False)
+    with pytest.raises(ValueError, match="timeout"):
+        resolve_http_timeout(0)
+
+
+def test_client_sends_user_agent(monkeypatch):
+    monkeypatch.setenv("SUMCLI_CLIENT_CONTEXT", "claude-plugin/0.4.0")
+    from sum_cli import __version__
+    from sum_cli.client import Client
+    from sum_cli.config import Config
+
+    client = Client(
+        cfg=Config(
+            base_url="https://example.com",
+            access_token=None,
+            device_login_credential=None,
+            client_id="cid",
+            client_secret="secret",
+            m2m_scope=None,
+            profile="t",
+            default_project=None,
+            source="test",
+        )
+    )
+    try:
+        assert client._http.headers["user-agent"] == f"sumcli/{__version__} (claude-plugin/0.4.0)"
+    finally:
+        client.close()

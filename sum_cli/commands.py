@@ -12,6 +12,7 @@ import typer
 
 from sum_cli.client import Client
 from sum_cli.config import Config, load
+from sum_cli.intent import enforce_intent
 from sum_cli.output import action, emit_error, err, invalid_request, param
 from sum_cli.project_context import resolve_project
 
@@ -50,6 +51,29 @@ def load_json_object(path: Path, flag: str, *, shape_hint: str) -> dict:
     return parsed
 
 
+def load_json_array(path: Path, flag: str, *, shape_hint: str) -> list:
+    """Read a JSON array from ``path``, reporting every failure as INVALID_REQUEST.
+
+    The array counterpart of :func:`load_json_object`; ``shape_hint`` is an example
+    of the expected array, shown when the file parses but is not one.
+    """
+    try:
+        parsed = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
+        invalid_request(
+            f"{flag} is not valid UTF-8 text: {exc}", f"Save {flag} as UTF-8 encoded JSON."
+        )
+    except ValueError as exc:
+        invalid_request(f"Invalid JSON in {flag}: {exc}", f"Provide a valid JSON array in {flag}.")
+    except OSError as exc:
+        invalid_request(
+            f"Cannot read {flag}: {exc}", f"Check that the {flag} path exists and is readable."
+        )
+    if not isinstance(parsed, list):
+        invalid_request(f"{flag} must contain a JSON array.", f"Use an array, e.g. {shape_hint}.")
+    return parsed
+
+
 _SET_CONTEXT = action(
     "Set default project for active profile",
     "sumcli config set-project --project <project-id>",
@@ -64,9 +88,36 @@ def get_config(ctx: typer.Context, profile: str | None = None) -> Config:
     return load(profile=profile)
 
 
+def get_intent(ctx: typer.Context) -> str | None:
+    """Resolved intent for this invocation. A plain getter — see ``checked_intent``."""
+    return getattr(ctx.obj, "intent", None) if ctx.obj is not None else None
+
+
+def checked_intent(ctx: typer.Context) -> str | None:
+    """Check the intent, then return it. Warns when absent; refuses only if oversized.
+
+    Called where a command actually reaches sum-api rather than from the root
+    callback. Click never runs a command body for ``--help``, so checking here makes
+    the help and discovery exemptions follow from control flow — no code has to
+    decide which argv token is a flag and which is an option value.
+    """
+    intent = get_intent(ctx)
+    enforce_intent(intent, subcommand=ctx.find_root().invoked_subcommand)
+    return intent
+
+
+def client_timeout(ctx: typer.Context) -> float | None:
+    obj = getattr(ctx, "obj", None)
+    return getattr(obj, "timeout", None)
+
+
 @contextmanager
 def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Client]:
-    client = Client(cfg=get_config(ctx, profile))
+    client = Client(
+        cfg=get_config(ctx, profile),
+        intent=checked_intent(ctx),
+        timeout=client_timeout(ctx),
+    )
     try:
         yield client
     finally:
@@ -76,8 +127,14 @@ def api_client(ctx: typer.Context, profile: str | None = None) -> Iterator[Clien
 def require_project(
     ctx: typer.Context,
     project: str | None = None,
+    *,
+    profile: str | None = None,
 ) -> str:
-    resolved = resolve_project(get_config(ctx), explicit=project)
+    # Check intent before resolving the project so the warning does not depend on
+    # whether a command resolves its project first. Warns once, so the later
+    # api_client call is a no-op.
+    checked_intent(ctx)
+    resolved = resolve_project(get_config(ctx, profile), explicit=project)
     if not resolved:
         emit_error(
             err(
@@ -128,7 +185,14 @@ def unwrap_data(body: object, *keys: str) -> object | None:
 
 
 def extract_list(data: object, *item_keys: str) -> list:
-    """Normalize API list payloads to a list."""
+    """Normalize API list payloads to a list.
+
+    A non-empty dict carrying none of ``item_keys`` is shape drift, not an empty
+    result, so it raises instead of returning ``[]``. Reporting "no results" for a
+    payload the CLI failed to read is the failure mode SUM-5882 was filed about: the
+    caller cannot tell a real zero from a response sumcli did not understand. An
+    empty dict stays an empty list — that is a genuine zero from several endpoints.
+    """
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -136,4 +200,16 @@ def extract_list(data: object, *item_keys: str) -> list:
             items = data.get(key)
             if isinstance(items, list):
                 return items
+        if data:
+            seen = ", ".join(sorted(map(str, data))) or "none"
+            expected = ", ".join(item_keys) or "none"
+            emit_error(
+                err(
+                    "UNEXPECTED_SHAPE",
+                    f"Response has no recognized list key. Expected one of: {expected}."
+                    f" Got keys: {seen}.",
+                    "The API response shape changed. Upgrade sumcli, or report this with"
+                    " sumcli --version output and the command you ran.",
+                )
+            )
     return []

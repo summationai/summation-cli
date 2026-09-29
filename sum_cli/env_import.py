@@ -1,4 +1,4 @@
-"""Parse skill-style env files and map to sumcli profile fields."""
+"""Parse env files with SUM_API_* keys and map them to sumcli profile fields."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def _parse_env_lines(path: Path) -> tuple[dict[str, str], dict[str, dict[str, st
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
-    """Parse a skill-style env file into a single profile's ``SUM_API_*`` keys.
+    """Parse an env file into a single profile's ``SUM_API_*`` keys.
 
     Flat files (no ``[profile.NAME]`` headers) return their keys directly.
     Sectioned files honor ``SUM_API_ACTIVE_PROFILE`` and return that section's

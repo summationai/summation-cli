@@ -18,7 +18,9 @@ _DOCS = ("README.md", "README-pypi.md", ".agents/skills/sumcli/SKILL.md")
 
 # Commands whose refusal is hand-rolled rather than a require_confirm() call, so
 # the scan below cannot see them. Both are verified by their own tests elsewhere.
-_CUSTOM_GATES = frozenset({"schedules run", "config delete-profile"})
+_CUSTOM_GATES = frozenset(
+    {"schedules run", "config delete-profile", "workflows activate", "workflows run"}
+)
 
 # One nesting level of parens, so a call like require_confirm(f(x), action_name="…")
 # still matches. Plain [^)]* fails open at the first ")".
@@ -54,7 +56,7 @@ def _documented_commands(doc: str) -> set[str]:
         None,
     )
     assert line is not None, f"{doc} has no destructive-commands line"
-    return set(re.findall(r"`([a-z]+(?: [a-z-]+)+)`", line))
+    return set(re.findall(r"`([a-z-]+(?: [a-z-]+)+)`", line))
 
 
 @pytest.mark.parametrize("doc", _DOCS)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import httpx
 import typer
 
@@ -15,9 +17,16 @@ from sum_cli.auth import (
     start_device_login,
 )
 from sum_cli.client import Client
+from sum_cli.commands import (
+    ProfileOption,
+    api_client,
+    checked_intent,
+    client_timeout,
+    get_config,
+    unwrap_data,
+)
 from sum_cli.config_store import redact
 from sum_cli.output import action, emit, emit_error, err, ok
-from sum_cli.commands import ProfileOption, api_client, get_config, unwrap_data
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -229,16 +238,40 @@ def status(ctx: typer.Context, profile: ProfileOption = None) -> None:
 
 
 @app.command("token")
-def show_token(ctx: typer.Context, profile: ProfileOption = None) -> None:
+def show_token(
+    ctx: typer.Context,
+    reveal: Annotated[
+        bool,
+        typer.Option(
+            "--reveal",
+            help="Show the unredacted bearer token in the JSON envelope. Treat the output"
+            " as a secret: it is a live credential, and stdout is captured in CI logs.",
+        ),
+    ] = False,
+    raw: Annotated[
+        bool,
+        typer.Option(
+            "--raw",
+            help="Print the bare bearer token and nothing else, for command substitution"
+            " (TOKEN=$(sumcli auth token --raw)). Treat the output as a secret.",
+        ),
+    ] = False,
+    profile: ProfileOption = None,
+) -> None:
     cfg = get_config(ctx, profile)
-    with Client(cfg) as c:
+    with Client(cfg, intent=checked_intent(ctx), timeout=client_timeout(ctx)) as c:
         token = c.token()
+    if raw:
+        # Bare token on stdout, no envelope, so $(...) captures a usable credential.
+        typer.echo(token)
+        return
+    token_display = token if reveal else redact(token)
     emit(
         ok(
             {
                 "profile": cfg.profile,
                 "auth_mode": _auth_mode(cfg),
-                "access_token": redact(token),
+                "access_token": token_display,
                 "token_length": len(token),
                 "token_expires_at": cfg.token_expires_at,
                 "session_persisted": bool(cfg.device_login_credential)

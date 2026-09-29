@@ -27,12 +27,29 @@ Or bootstrap uv + install in one shot:
 curl -fsSL https://install.summation.com/sumcli | sh
 ```
 
+```powershell
+irm https://install.summation.com/sumcli.ps1 | iex
+```
+
+From cmd.exe:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://install.summation.com/sumcli.ps1 | iex"
+```
+
 Then:
 
 ```bash
 sumcli --help
-uv tool upgrade summation-cli   # later upgrades
+sumcli update                   # upgrade a uv-managed install to the latest PyPI release
 ```
+
+A stderr notice appears when a newer version is on PyPI. Lookups are cached
+(a day on success, 15 minutes after a failed fetch).
+Disable with `SUMCLI_NO_UPDATE_CHECK=1`.
+`sumcli update` upgrades a uv-managed install only.
+
+The Summation plugin requires **sumcli ≥ 0.1.4**. Newer releases are always compatible; `sumcli update` installs PyPI latest.
 
 ## Resources
 
@@ -46,18 +63,33 @@ uv tool upgrade summation-cli   # later upgrades
 | `chats`       | Addison conversations; SSE → NDJSON with `--follow` on create/reply                                                                                  |
 | `reports`     | Generate and verify reports (`.sdoc`); file ops via `files`                                                                                          |
 | `playbooks`   | Playbook discovery                                                                                                                                   |
-| `schedules`   | Recurring playbook runs (`list`, `show`, `create`, `update`, `delete`, `pause`, `resume`, `run`, `runs`)                                             |
+| `schedules`   | Recurring playbook runs (`list`, `show`, `create`, `update`, `delete`, `pause`, `resume`, `run`, `runs`); create may require workflows                |
+| `workflows`   | Multi-step automations (typed graphs: create/update/activate/run, versions, node-types)                                                              |
 | `files`       | Project-scoped files (`upload`, `download`, `list`, `show`, `import`, `delete`)                                                                      |
 | `filesystem`  | Connected filesystem roots such as SharePoint (`roots`, `list`, `upload`, `download`, `mkdir`, `delete`, `import-env`, `set-defaults`)               |
 | `catalog`     | Project catalog entries (`list`, `show`, `attach`, `detach`, `refresh`)                                                                              |
-| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
-| `tables`      | Grid tables and CSV import (`tables import` is a multi-step HTTP workflow); also `append`, `data`, `import-status`, `catalog-show`, `catalog-update` |
+| `connections` | Data source connections (CRUD, `test`, `browse`, `datasets`, `attach-datasets`, `detach-dataset`, `snapshot`, `snapshots`) and app connectors (`app-*`)                |
+| `tables`      | Grid tables and CSV import (`tables import`); row loads via `append` or `upsert`; also `data`, `import-status`, `catalog-show`, `catalog-update` |
 | `views`       | Summation views (`list`, `show`, `data`, `delete`, `catalog-show`, `catalog-update`)                                                                 |
-| `grid`        | Grid `status`, `create`, `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
-| `queries`     | Read-only SQL execution (`queries run`)                                                                                                              |
+| `grid`        | Grid `status`, `create` (`--kind calc`/`data`), `push`, `diff`, `validate`, `materialize`, `lineage`                                                                        |
+| `queries`     | Read-only SQL execution (`queries run`). Result column names arrive camelCased (`order_id` as `orderId`)                                              |
+| `verification-tests` | Custom verification tests (`validate`, `upload`, `list`, `attach`, `list-attachments`, `preview`, `detach`)                                  |
 
 
 Run `sumcli | jq '.result.resources'` for the live command tree with action blurbs, or `sumcli <resource> --help` for flags.
+
+### Custom verification tests
+
+```bash
+sumcli verification-tests validate --bundle ./tests.yaml
+sumcli verification-tests upload --bundle ./tests.yaml
+sumcli verification-tests attach --scope project --subject-type deck \
+  --op add --custom-test-id cvt-...
+sumcli verification-tests preview --scope project --subject-type deck
+sumcli verification-tests detach vta-... --scope project --confirm
+```
+
+Validation is offline. Project scope falls back to the profile's default project, while cross-org project calls (`--target-org ORG`) require `--project`. Mutation `--dry-run` prints the exact request without authentication or network access. A removal overlay (`attach --op remove --target-ref ... --confirm`) suppresses a test that currently runs for the scope, so it requires `--confirm`; detaching an attachment (`detach ... --confirm`) is a distinct operation.
 
 ## Quickstart
 
@@ -70,14 +102,11 @@ sumcli auth whoami | jq .
 
 `auth login` prints a device code and a URL. Approve it in the browser, and the CLI stores the session in `~/.summation/summation-config`.
 
-Existing `~/.summation/config` users should rename that file to
-`~/.summation/summation-config`; the TOML format is unchanged.
-
 **Optional — named profile for a non-default host:**
 
 ```bash
 sumcli config set-profile my-org \
-  --base-url https://sandbox-api.summation.com
+  --base-url https://api-<tenant>.summation.com
 
 sumcli config use my-org                       # make it the active profile
 sumcli auth login                              # log in against that profile
@@ -95,7 +124,7 @@ sumcli config clear-project --profile my-org       # undo
 
 ```bash
 sumcli config set-profile my-org \
-  --base-url https://sandbox-api.summation.com \
+  --base-url https://api-<tenant>.summation.com \
   --client-id "$CLIENT_ID" \
   --client-secret "$CLIENT_SECRET"
 
@@ -141,6 +170,36 @@ sumcli tables import --remote --path /Customers.csv --table customers
 
 Step 2 also accepts `--file-id file-...` if you have the ID directly.
 
+### Agent-owned data table (`grid create --kind data`)
+
+When your code owns the rows — app state, an operator log, a suppression list — create
+an empty **data** table from a column schema instead of deriving one from existing data:
+
+```bash
+sumcli grid create ops_log --kind data \
+  --column event_id:uuid:notnull \
+  --column op:string \
+  --column count:integer \
+  --key-column event_id
+```
+
+Each `--column` is `name:type[:null|notnull]`, order kept. Types: `string`, `integer`,
+`decimal`, `big_decimal`, `boolean`, `date`, `datetime`, `json`, `uuid`. Nullable unless
+`:notnull`. For a longer schema use `--columns-file cols.json` (a JSON array of
+`{"name", "type", "nullable"}` objects). The table accepts rows immediately:
+
+```bash
+sumcli tables upsert tbl-... --rows '[{"event_id": "...", "op": "suppress", "count": 1}]'
+```
+
+**`tables append` vs `tables upsert`:** `upsert` (`PUT`) matches on business keys — the
+usual path after `grid create --kind data`. `append` (`POST`) is append-only and requires
+you to supply `s_id` in each row.
+
+`--key-column` names the business key used to match rows on upsert, not the physical
+primary key: every data table already has an integer `s_id` primary key and an
+`s_created_at` timestamp added for you. Max 50 columns per create.
+
 ### Existing project file → grid table
 
 If the file is already in the project (uploaded by someone else, dropped via the UI, etc.):
@@ -167,7 +226,7 @@ sumcli tables delete --confirm tbl-...                          # remove from gr
 
 ### Scheduled playbook runs
 
-Schedules target **playbooks only**. Playbook ids come back as `fileId` from `playbooks list`.
+Schedules target **playbooks only**. Playbook ids come back as `fileId` from `playbooks list`. On tenants with workflows enabled, `schedules create` may return `403 use_workflows` — use `workflows` instead (existing schedules remain usable).
 
 ```bash
 sumcli schedules create --project prj-... --playbook file-... \
@@ -184,6 +243,19 @@ sumcli schedules delete schedule_... --confirm
 `--type` accepts `cron`, `interval`, `one_time`, `daily`, `weekly`, `biweekly`, `monthly`, `month_end`, and `yearly`. Supply the fields each type needs: `--cron`, `--every-minutes`, `--run-date`, `--day`, `--day-of-month`, `--month`.
 
 > **Note:** `schedules update` replaces the cadence, so re-send every cadence flag. Config is preserved — the command reads the schedule first and carries over `--email`, `--param`, `--output-folder`, `--max-concurrent-runs`, and `--paused` when you omit them.
+
+### Workflows
+
+Typed-graph automations under `/v1/workflows` (feature-gated). Author `graph.json` / `triggers.json` from `workflows node-types`, then create → activate → run.
+
+```bash
+sumcli workflows node-types
+sumcli workflows create --project prj-... --title "Weekly" \
+  --graph-file graph.json --triggers-file triggers.json
+sumcli workflows activate wf_... --expected-revision N --confirm
+sumcli workflows run wf_... --confirm
+sumcli workflows runs wf_...
+```
 
 ### Long-running operations
 
@@ -203,14 +275,16 @@ sumcli projects --help   # per-command flags and help strings
 ## Command shape
 
 ```text
-sumcli [--profile NAME] [--base-url URL] <resource> <action> [--options]
+sumcli [--intent TEXT] [--profile NAME] [--base-url URL] <resource> <action> [--options]
 ```
+
+`--intent` is the human's request, using their words when possible (not a command summary). Optional — omitting it in machine mode warns on stderr but still runs, so scripted and scheduled callers are unaffected. Agents should always pass it. Discovery, `--help`, `--version`, `update`, and the `auth`, `config`, and `filesystem` groups never warn. `SUMCLI_INTENT` sets the string for a session. `SUMCLI_NO_INTENT=1` suppresses the header even when an intent is set.
 
 Project-scoped commands accept `--project` when no default project is configured.
 
 ## Behavior
 
-- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections app-delete`, `schedules delete`, `schedules run`, `catalog detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` is gated because a manual run delivers real email immediately.
+- Destructive commands require **`--confirm`**: `projects delete`, `files delete`, `views delete`, `tables delete`, `connections delete`, `connections detach-dataset`, `connections app-delete`, `schedules delete`, `schedules run`, `workflows activate`, `workflows run`, `catalog detach`, `verification-tests attach` (removal overlays only), `verification-tests detach`, `filesystem delete`, `config delete-profile`. `filesystem upload` requires `--confirm` only when it overwrites an existing file. `schedules run` / `workflows run` / `workflows activate` are gated because they can deliver real email/Slack immediately.
 - `sumcli auth status` calls `GET /v1/auth/status` only (not an alias for `whoami`).
 - `sumcli auth token` exchanges credentials if needed and prints a **redacted** token plus length.
 - List commands default to **50** items unless `--count` is set (`showing`, `total`, `truncated` in the result).

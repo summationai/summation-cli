@@ -1,9 +1,14 @@
 #!/usr/bin/env sh
-# Build and publish summation-cli to PyPI.
+# Local/emergency publish for summation-cli (TestPyPI or PyPI).
 #
-# This is the release path for this repository. There is no CI publish workflow —
-# run this script deliberately when ready. It builds from the current working
-# tree (including uncommitted changes) and does not enforce merge or tag gates.
+# Production releases should use the tag-triggered CI workflow
+# (.github/workflows/release.yml): bump __version__, merge to main, push vX.Y.Z.
+# Prefer that path — it re-runs tests, enforces tag/version match, and publishes
+# via PyPI Trusted Publishing (OIDC) without a long-lived token.
+#
+# This script builds from the current working tree (including uncommitted
+# changes) and does not enforce merge or tag gates. Use it for TestPyPI dry
+# runs or when CI publish is unavailable.
 #
 # Usage (from repo root):
 #   ./scripts/publish.sh                # TestPyPI (default)
@@ -29,7 +34,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --test) TARGET="test" ;;
     --production|--prod) TARGET="production" ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1 (use --test or --production)" ;;
   esac
   shift

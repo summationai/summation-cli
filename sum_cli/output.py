@@ -51,7 +51,7 @@ _SKIP_COMMAND_PARTS = frozenset({"main", "sumcli", "root"})
 
 # Root options that take a value, so the following token is that value (not a
 # subcommand). Used by the argv fallback to skip past leading global options.
-_ROOT_VALUE_OPTIONS = frozenset({"--output", "--profile", "--base-url"})
+_ROOT_VALUE_OPTIONS = frozenset({"--output", "--profile", "--base-url", "--intent"})
 
 
 def _ts() -> str:

@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sum_cli.config_store import (
-    DEFAULT_CONFIG_PATH,
+    config_path,
     get_active_profile_name,
     read_all,
 )
 from sum_cli.constants import DEVICE_LOGIN_CREDENTIAL_KEY, META_SECTION, TOKEN_EXPIRES_AT_KEY
 
-DEFAULT_BASE_URL = "https://sandbox-api.summation.com"
+DEFAULT_BASE_URL = "https://api.summation.com"
 DEFAULT_PROFILE = "default"
 
 
@@ -61,7 +61,7 @@ def load(
     config_file: Path | str | None = None,
 ) -> Config:
     env = os.environ
-    path = Path(config_file or env.get("SUMMATION_CONFIG_FILE") or DEFAULT_CONFIG_PATH)
+    path = Path(config_file) if config_file else config_path()
     all_data = read_all(path)
 
     resolved_profile = (

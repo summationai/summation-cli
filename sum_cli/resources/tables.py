@@ -10,15 +10,16 @@ from typing import Annotated
 
 import typer
 
-from sum_cli.output import emit, err, emit_error, ndjson, ok, truncate_list
 from sum_cli.commands import (
     ProfileOption,
     api_client,
-    require_confirm,
     api_confirm_params,
+    load_json_array,
+    require_confirm,
     require_project,
     unwrap_data,
 )
+from sum_cli.output import emit, emit_error, err, invalid_request, ndjson, ok, truncate_list
 from sum_cli.streaming import exit_if_stream_failed
 from sum_cli.tempfiles import write_temp_bytes
 
@@ -26,6 +27,135 @@ app = typer.Typer(no_args_is_help=True)
 
 _IMPORT_TERMINAL_STATES = frozenset({"COMPLETED", "FAILED", "SUCCEEDED", "SUCCESS", "ERROR"})
 _IMPORT_FAILED_STATES = frozenset({"FAILED", "ERROR"})
+_IMPORT_TYPES = frozenset({"NEW", "FULL_REFRESH", "INCREMENTAL_REFRESH"})
+_REFRESH_IMPORT_TYPES = frozenset({"FULL_REFRESH", "INCREMENTAL_REFRESH"})
+
+
+def _resolve_import_options(
+    *,
+    refresh: bool,
+    import_type: str | None,
+    confirm: bool,
+) -> tuple[str, bool]:
+    normalized_import_type = import_type.upper() if import_type else None
+    if refresh and normalized_import_type and normalized_import_type != "FULL_REFRESH":
+        invalid_request(
+            "--refresh implies --import-type FULL_REFRESH.",
+            "Drop --import-type or use --import-type FULL_REFRESH without --refresh.",
+        )
+    resolved_type = "FULL_REFRESH" if refresh else (normalized_import_type or "NEW")
+    if resolved_type not in _IMPORT_TYPES:
+        invalid_request(
+            f"Unsupported --import-type {resolved_type!r}.",
+            f"Use one of: {', '.join(sorted(_IMPORT_TYPES))}.",
+        )
+    resolved_confirm = confirm or refresh
+    if resolved_type in _REFRESH_IMPORT_TYPES and not resolved_confirm:
+        # Only FULL_REFRESH may be reached via --refresh; naming that shorthand under
+        # INCREMENTAL_REFRESH would talk the caller into a different import type.
+        fix = "Pass --confirm."
+        if resolved_type == "FULL_REFRESH":
+            fix = "Pass --confirm or use --refresh (shorthand for FULL_REFRESH + confirm)."
+        invalid_request(
+            f"{resolved_type} replaces an existing table's rows and requires confirmation.",
+            fix,
+        )
+    return resolved_type, resolved_confirm
+
+
+_MAPPING_REQUIRED_KEYS = ("source_column_name", "target_column_name")
+_MAPPING_OPTIONAL_KEYS = ("data_type", "nullable", "required", "unique")
+_MAPPING_SHAPE_HINT = '{"source_column_name": "...", "target_column_name": "..."}'
+# Earlier help text advertised these, and sum-api answers them with a 422 naming neither.
+_MAPPING_LEGACY_KEYS = {"sourceColumn": "source_column_name", "targetColumn": "target_column_name"}
+
+
+def _validate_column_mappings(entries: list) -> list[dict]:
+    """Check entries against TableImportColumnMapping before sum-api sees them.
+
+    The mappings feed both /v1/assets/{id}/previews and /v1/table-imports, and unknown
+    keys are dropped server-side rather than rejected — so a camelCase file fails as a
+    422 about missing required fields, naming neither the key that was ignored nor its
+    correct spelling. Refusing it here lets the error say both.
+    """
+    allowed = set(_MAPPING_REQUIRED_KEYS) | set(_MAPPING_OPTIONAL_KEYS)
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            invalid_request(
+                f"--column-mappings-file entry {index} is not a JSON object.",
+                f"Use objects, e.g. {_MAPPING_SHAPE_HINT}.",
+            )
+        renamed = sorted(set(entry) & set(_MAPPING_LEGACY_KEYS))
+        if renamed:
+            spelled = ", ".join(f"{key} -> {_MAPPING_LEGACY_KEYS[key]}" for key in renamed)
+            invalid_request(
+                f"--column-mappings-file entry {index} uses camelCase keys: {', '.join(renamed)}.",
+                f"Rename them: {spelled}.",
+            )
+        unknown = sorted(set(entry) - allowed)
+        if unknown:
+            invalid_request(
+                f"--column-mappings-file entry {index} has unknown keys: {', '.join(unknown)}.",
+                f"Each mapping takes {', '.join(_MAPPING_REQUIRED_KEYS)}"
+                f" and optional {', '.join(_MAPPING_OPTIONAL_KEYS)}.",
+            )
+        for key in _MAPPING_REQUIRED_KEYS:
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                invalid_request(
+                    f"--column-mappings-file entry {index} needs a non-empty string {key}.",
+                    f"Use objects, e.g. {_MAPPING_SHAPE_HINT}.",
+                )
+    return entries
+
+
+def _load_column_mappings(path: Path | None) -> list:
+    if path is None:
+        return []
+    try:
+        parsed = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
+        invalid_request(
+            f"--column-mappings-file is not valid UTF-8 text: {exc}",
+            "Save --column-mappings-file as UTF-8 encoded JSON.",
+        )
+    except ValueError as exc:
+        invalid_request(
+            f"Invalid JSON in --column-mappings-file: {exc}",
+            "Provide a JSON array or an object with a column_mappings array.",
+        )
+    except OSError as exc:
+        invalid_request(
+            f"Cannot read --column-mappings-file: {exc}",
+            "Check that the --column-mappings-file path exists and is readable.",
+        )
+    if isinstance(parsed, list):
+        return _validate_column_mappings(parsed)
+    if isinstance(parsed, dict):
+        mappings = parsed.get("column_mappings")
+        if mappings is None:
+            invalid_request(
+                "--column-mappings-file must contain a column_mappings array.",
+                'Use {"column_mappings": [...]} or a top-level JSON array.',
+            )
+        if not isinstance(mappings, list):
+            invalid_request(
+                "--column-mappings-file column_mappings must be a JSON array.",
+                'Use {"column_mappings": [...]} or a top-level JSON array.',
+            )
+        return _validate_column_mappings(mappings)
+    invalid_request(
+        "--column-mappings-file must contain a JSON array or object.",
+        'Use {"column_mappings": [...]} or a top-level array of'
+        ' {"source_column_name": "...", "target_column_name": "..."} objects.',
+    )
+
+_ROWS_SHAPE_HINT = '[{"col": "val"}]'
+_MIN_ROWS_PER_REQUEST = 1
+_MAX_ROWS_PER_REQUEST = 500
+_ROWS_PER_REQUEST_HELP = (
+    f" Send {_MIN_ROWS_PER_REQUEST}–{_MAX_ROWS_PER_REQUEST} row objects per request."
+)
 
 
 def _resolve_table_id(c, table_name: str) -> str | None:
@@ -56,6 +186,64 @@ def _emit_import_wait_terminal(terminal: dict) -> None:
     exit_if_stream_failed(terminal)
 
 
+def _validate_row_count(parsed: list) -> None:
+    count = len(parsed)
+    if count < _MIN_ROWS_PER_REQUEST:
+        emit_error(
+            err(
+                "INVALID_ROWS",
+                "Rows must include at least one object.",
+                f"Pass a non-empty JSON array with up to {_MAX_ROWS_PER_REQUEST} rows.",
+            )
+        )
+    if count > _MAX_ROWS_PER_REQUEST:
+        emit_error(
+            err(
+                "INVALID_ROWS",
+                f"{count} rows exceeds the {_MAX_ROWS_PER_REQUEST}-row limit per request.",
+                f"Split the load into batches of at most {_MAX_ROWS_PER_REQUEST} rows.",
+            )
+        )
+
+
+def _load_rows_from_flags(
+    *,
+    rows: str | None,
+    file: Path | None,
+) -> list:
+    if (rows is None) == (file is None):
+        emit_error(
+            err(
+                "INVALID_FLAGS",
+                "Provide exactly one of --rows or --file.",
+                'Pass --rows \'[{"col": "val"}]\' or --file rows.json.',
+            )
+        )
+    if file is not None:
+        parsed = load_json_array(file, "--file", shape_hint=_ROWS_SHAPE_HINT)
+    else:
+        try:
+            parsed = json.loads(rows)  # type: ignore[arg-type]
+        except json.JSONDecodeError as exc:
+            emit_error(
+                err(
+                    "INVALID_JSON",
+                    f"Rows are not valid JSON: {exc}.",
+                    "Pass a JSON array of objects.",
+                )
+            )
+        if not isinstance(parsed, list):
+            emit_error(
+                err(
+                    "INVALID_ROWS",
+                    "Rows must be a JSON array of objects.",
+                    "Wrap your rows in [ ... ].",
+                )
+            )
+    _validate_row_count(parsed)
+    return parsed
+
+
 def _emit_append_result(result: dict) -> None:
     status = str(result.get("status", "")).upper()
     if status == "FULL":
@@ -80,6 +268,32 @@ def _emit_append_result(result: dict) -> None:
             "Append did not complete successfully.",
             "Review the table schema and row values, then retry.",
             data={"status": status or None, "errors": errors},
+        )
+    )
+
+
+def _emit_upsert_result(result: dict) -> None:
+    errors = result.get("errors") or []
+    inserted = result.get("inserted") or 0
+    updated = result.get("updated") or 0
+    if not errors:
+        emit(ok({"result": result}))
+        return
+    if inserted or updated:
+        emit_error(
+            err(
+                "UPSERT_PARTIAL",
+                f"Partial upsert: {inserted} inserted, {updated} updated, {len(errors)} failed.",
+                "Review errors and retry only the failed rows.",
+                data={"inserted": inserted, "updated": updated, "errors": errors},
+            )
+        )
+    emit_error(
+        err(
+            "UPSERT_FAILED",
+            "Upsert did not complete successfully.",
+            "Review the table schema and row values, then retry.",
+            data={"inserted": inserted, "updated": updated, "errors": errors},
         )
     )
 
@@ -174,38 +388,22 @@ def append_rows(
     table_id: Annotated[str, typer.Argument()],
     rows: Annotated[
         str | None,
-        typer.Option("--rows", help="Rows as an inline JSON array of objects."),
+        typer.Option(
+            "--rows",
+            help=f"Rows as an inline JSON array of objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
     ] = None,
     file: Annotated[
         Path | None,
-        typer.Option("--file", help="Path to a JSON file holding an array of row objects."),
+        typer.Option(
+            "--file",
+            help=f"Path to a JSON file holding an array of row objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
     ] = None,
     profile: ProfileOption = None,
 ) -> None:
-    """Append rows to a table (append-only). Rows come from --rows or --file as a JSON array of objects."""
-    if (rows is None) == (file is None):
-        emit_error(
-            err(
-                "INVALID_FLAGS",
-                "Provide exactly one of --rows or --file.",
-                'Pass --rows \'[{"col": "val"}]\' or --file rows.json.',
-            )
-        )
-    raw = file.read_text() if file is not None else rows
-    try:
-        parsed = json.loads(raw)  # type: ignore[arg-type]
-    except json.JSONDecodeError as exc:
-        emit_error(
-            err("INVALID_JSON", f"Rows are not valid JSON: {exc}.", "Pass a JSON array of objects.")
-        )
-    if not isinstance(parsed, list):
-        emit_error(
-            err(
-                "INVALID_ROWS",
-                "Rows must be a JSON array of objects.",
-                "Wrap your rows in [ ... ].",
-            )
-        )
+    """Append rows to a table (append-only). Each row must include the table primary key (s_id)."""
+    parsed = _load_rows_from_flags(rows=rows, file=file)
     payload: dict = {"rows": parsed}
     with api_client(ctx, profile) as c:
         body = c.request("POST", f"/v1/tables/{table_id}/rows", json=payload)
@@ -214,6 +412,64 @@ def append_rows(
         emit(ok({"result": result}))
         return
     _emit_append_result(result)
+
+
+@app.command("upsert")
+def upsert_rows(
+    ctx: typer.Context,
+    table_id: Annotated[str, typer.Argument()],
+    rows: Annotated[
+        str | None,
+        typer.Option(
+            "--rows",
+            help=f"Rows as an inline JSON array of objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
+    ] = None,
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            "--file",
+            help=f"Path to a JSON file holding an array of row objects.{_ROWS_PER_REQUEST_HELP}",
+        ),
+    ] = None,
+    key_column: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--key-column",
+            help="Business-key column(s) for row identity; omit to use the table's declared keys.",
+        ),
+    ] = None,
+    profile: ProfileOption = None,
+) -> None:
+    """Upsert rows by business key (insert or update). Do not include s_id in rows."""
+    parsed = _load_rows_from_flags(rows=rows, file=file)
+    for index, row in enumerate(parsed):
+        if not isinstance(row, dict):
+            emit_error(
+                err(
+                    "INVALID_ROWS",
+                    f"Row {index} is not a JSON object.",
+                    'Pass an array of objects, e.g. [{"event_id": "..."}].',
+                )
+            )
+        if "s_id" in row or "sId" in row:
+            emit_error(
+                err(
+                    "INVALID_ROWS",
+                    f"Row {index} must not include s_id.",
+                    "Upsert derives s_id from business keys. Use tables append to supply s_id.",
+                )
+            )
+    payload: dict = {"rows": parsed}
+    if key_column:
+        payload["key_columns"] = key_column
+    with api_client(ctx, profile) as c:
+        body = c.request("PUT", f"/v1/tables/{table_id}/rows", json=payload)
+    result = unwrap_data(body or {}, "data") or body
+    if not isinstance(result, dict):
+        emit(ok({"result": result}))
+        return
+    _emit_upsert_result(result)
 
 
 @app.command("import-status")
@@ -283,9 +539,43 @@ def import_table(
     wait: Annotated[
         bool, typer.Option("--wait/--no-wait", help="Poll import until complete.")
     ] = True,
+    import_type: Annotated[
+        str | None,
+        typer.Option(
+            "--import-type",
+            help="Import mode: NEW (default) or FULL_REFRESH (replaces existing table rows).",
+        ),
+    ] = None,
+    confirm: Annotated[
+        bool,
+        typer.Option(
+            "--confirm",
+            help="Confirm destructive import (required for FULL_REFRESH; --refresh implies this).",
+        ),
+    ] = False,
+    refresh: Annotated[
+        bool,
+        typer.Option(
+            "--refresh",
+            help="Shorthand for --import-type FULL_REFRESH --confirm.",
+        ),
+    ] = False,
+    column_mappings_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--column-mappings-file",
+            help='JSON file with {"column_mappings": [...]} for preview/import.',
+        ),
+    ] = None,
     separator: Annotated[str, typer.Option("--separator")] = ",",
     profile: ProfileOption = None,
 ) -> None:
+    resolved_import_type, resolved_confirm = _resolve_import_options(
+        refresh=refresh,
+        import_type=import_type,
+        confirm=confirm,
+    )
+    column_mappings = _load_column_mappings(column_mappings_file)
     if file_id is not None:
         remote = True
     if local and remote:
@@ -387,7 +677,7 @@ def import_table(
             "POST",
             f"/v1/assets/{asset_id}/previews",
             json={
-                "column_mappings": [],
+                "column_mappings": column_mappings,
                 "csv": {
                     "char_encoding": "UTF_8",
                     "column_separator": separator,
@@ -403,10 +693,12 @@ def import_table(
         created = c.request(
             "POST",
             "/v1/table-imports",
+            params={"confirm": "true"} if resolved_confirm else None,
             json={
                 "asset_id": asset_id,
                 "table_name": table_name,
-                "column_mappings": [],
+                "import_type": resolved_import_type,
+                "column_mappings": column_mappings,
             },
         )
         created_data = unwrap_data(created or {}, "data") or created
