@@ -149,7 +149,7 @@ def _safe_default_name(data: dict, file_id: str) -> str:
 
     The name comes from the file's stored path and is untrusted, so any directory component
     (including ``..`` or an absolute path) is stripped. Falls back to the file id when nothing
-    usable remains, so the destination is always a plain name in the working directory.
+    usable remains, so the destination is always a plain name inside the download directory.
     """
     raw = data.get("fileName") or data.get("file_name") or ""
     name = Path(str(raw)).name.strip()
@@ -158,12 +158,20 @@ def _safe_default_name(data: dict, file_id: str) -> str:
     return name
 
 
+def _current_umask() -> int:
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
 def _stream_url_to_file(url: str, dest: Path, file_id: str) -> int:
     """Stream a presigned URL's bytes to ``dest`` a chunk at a time. Returns bytes written.
 
     Writes to a UNIQUE temp file in the destination directory and renames onto ``dest`` on
     success, so a mid-stream failure never leaves a truncated file at ``dest``, and the temp
-    file can never clobber an existing sibling the user already has.
+    file can never clobber an existing sibling the user already has. ``mkstemp`` creates the
+    temp file as 0600, so it is widened to the umask default before the rename — the result has
+    the same mode as any file the user writes.
     """
     total = 0
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -178,6 +186,7 @@ def _stream_url_to_file(url: str, dest: Path, file_id: str) -> int:
                 for chunk in resp.iter_bytes(_DOWNLOAD_CHUNK_BYTES):
                     handle.write(chunk)
                     total += len(chunk)
+        partial.chmod(0o666 & ~_current_umask())
         partial.replace(dest)  # atomic on the same filesystem; only a complete file reaches dest
     except (httpx.HTTPError, ApiError) as exc:
         # Any failure — transport drop, or the presigned URL itself 4xx-ing — leaves nothing at

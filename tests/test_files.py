@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -134,6 +136,30 @@ def test_download_raw_streams_from_presigned_url(monkeypatch, tmp_path: Path) ->
     assert payload["result"]["bytes"] == 9
 
 
+def test_download_raw_output_gets_umask_default_mode(monkeypatch, tmp_path: Path) -> None:
+    """The streamed file must not keep mkstemp's 0600 — -o gets the same mode as a plain write."""
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setenv("SUMMATION_PROJECT", "proj_1")
+    captured: dict = {}
+    out = tmp_path / "o.bin"
+    previous = os.umask(0o022)
+    try:
+        with (
+            patch(
+                "sum_cli.resources.files.api_client", return_value=_download_url_client(captured)
+            ),
+            patch("sum_cli.resources.files.httpx.stream", return_value=_FakeStream()),
+        ):
+            result = runner.invoke(
+                app, ["files", "download", "file-1", "--project", "proj_1", "-o", str(out)]
+            )
+    finally:
+        os.umask(previous)
+    assert result.exit_code == 0
+    assert stat.S_IMODE(out.stat().st_mode) == 0o644
+
+
 def test_download_raw_does_not_clobber_an_existing_part_sibling(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -161,7 +187,7 @@ def test_download_raw_does_not_clobber_an_existing_part_sibling(
 def test_download_raw_default_name_cannot_escape_the_working_directory(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """A file named with a traversal path must land as a basename in cwd, never outside it."""
+    """A traversal-path file name must land as a basename in the temp dir, never outside it."""
     monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
     monkeypatch.setenv("SUMMATION_PROJECT", "proj_1")
@@ -206,7 +232,7 @@ def test_download_raw_leaves_no_partial_file_on_a_mid_stream_failure(
         )
     assert result.exit_code == 1
     assert not out.exists()  # no truncated file at the destination
-    assert not (tmp_path / "o.bin.part").exists()  # the partial is cleaned up too
+    assert list(tmp_path.iterdir()) == []  # the unique .part temp file is cleaned up too
 
 
 def test_download_raw_without_output_writes_to_an_isolated_temp_dir(
