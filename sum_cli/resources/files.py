@@ -189,9 +189,6 @@ def _stream_url_to_file(url: str, dest: Path, file_id: str) -> int:
         partial.chmod(0o666 & ~_current_umask())
         partial.replace(dest)  # atomic on the same filesystem; only a complete file reaches dest
     except (httpx.HTTPError, ApiError) as exc:
-        # Any failure — transport drop, or the presigned URL itself 4xx-ing — leaves nothing at
-        # dest and no leftover temp file.
-        partial.unlink(missing_ok=True)
         emit_error(
             err(
                 "DOWNLOAD_FAILED",
@@ -199,6 +196,10 @@ def _stream_url_to_file(url: str, dest: Path, file_id: str) -> int:
                 "The download URL is short-lived (~15 min); re-run to mint a fresh one.",
             )
         )
+    finally:
+        # Any exit short of the rename — transport drop, the presigned URL 4xx-ing, or Ctrl-C —
+        # leaves no leftover temp file. After a successful rename this is a no-op.
+        partial.unlink(missing_ok=True)
     return total
 
 

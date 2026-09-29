@@ -235,6 +235,30 @@ def test_download_raw_leaves_no_partial_file_on_a_mid_stream_failure(
     assert list(tmp_path.iterdir()) == []  # the unique .part temp file is cleaned up too
 
 
+def test_download_raw_leaves_no_partial_file_on_interrupt(monkeypatch, tmp_path: Path) -> None:
+    """Ctrl-C mid-stream must not leave a hidden .part file (GBs on a large download)."""
+    monkeypatch.setenv("SUM_API_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("SUM_API_BASE_URL", "https://example.com")
+    monkeypatch.setenv("SUMMATION_PROJECT", "proj_1")
+    captured: dict = {}
+    out = tmp_path / "o.bin"
+
+    class _InterruptedStream(_FakeStream):
+        def iter_bytes(self, _size: int = 0):
+            yield b"partial "
+            raise KeyboardInterrupt
+
+    with (
+        patch("sum_cli.resources.files.api_client", return_value=_download_url_client(captured)),
+        patch("sum_cli.resources.files.httpx.stream", return_value=_InterruptedStream()),
+    ):
+        result = runner.invoke(
+            app, ["files", "download", "file-1", "--project", "proj_1", "-o", str(out)]
+        )
+    assert result.exit_code != 0
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_download_raw_without_output_writes_to_an_isolated_temp_dir(
     monkeypatch, tmp_path: Path
 ) -> None:
